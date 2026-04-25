@@ -1,0 +1,28 @@
+# Rust
+/target/
+
+# Node.js
+node_modules/
+
+# Build output
+win-desktop/renderer/dist/
+win-desktop/renderer/assets/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

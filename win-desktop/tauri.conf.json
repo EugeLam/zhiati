@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "纸条",
+  "identifier": "com.zhiati.desktop",
+  "version": "0.1.0",
+  "build": {
+    "beforeDevCommand": "cd renderer && npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "cd renderer && npm run build",
+    "frontendDist": "./renderer/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "纸条",
+        "width": 900,
+        "height": 700,
+        "minWidth": 600,
+        "minHeight": 400,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "center": true,
+        "url": "http://localhost:5173"
+      },
+      {
+        "label": "mini",
+        "title": "纸条",
+        "width": 280,
+        "height": 380,
+        "minWidth": 200,
+        "minHeight": 100,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "url": "http://localhost:5173?mode=mini"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
+  }
+}

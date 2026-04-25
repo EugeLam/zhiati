@@ -1,0 +1,22 @@
+[package]
+name = "zhiati-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "zt"
+path = "src/main.rs"
+
+[dependencies]
+zhiati-shared = { path = "../shared" }
+clap = { version = "4.0", features = ["derive"] }
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+keyring = "2.0"

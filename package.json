@@ -1,0 +1,39 @@
+{
+  "name": "zhiati",
+  "version": "0.1.0",
+  "description": "纸条 - 备忘录软件",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "server",
+    "cli",
+    "win-desktop"
+  ],
+  "scripts": {
+    "dev:server": "cd server && cargo run",
+    "dev:cli": "cd cli && cargo run",
+    "dev:desktop": "cd win-desktop && tauri dev",
+    "build:server": "cd server && cargo build --release",
+    "build:cli": "cd cli && cargo build --release",
+    "build:desktop": "cd desktop && cargo tauri build",
+    "build:all": "npm run build:server && npm run build:cli && npm run build:desktop"
+  },
+  "keywords": [
+    "memo",
+    "notes",
+    "tauri",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2.10.1",
+    "easymde": "^2.20.0",
+    "marked": "^18.0.2",
+    "vite": "^8.0.9"
+  },
+  "devDependencies": {
+    "pg": "^8.20.0"
+  }
+}

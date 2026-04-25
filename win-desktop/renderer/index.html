@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>纸条</title>
+  <link rel="icon" type="image/png" href="/icon.png">
+  <link rel="stylesheet" href="/node_modules/easymde/dist/easymde.min.css">
+  <style>
+    :root {
+      --mini-bg: rgba(251, 247, 236, 0.92);
+      --mini-header-bg: rgba(244, 239, 224, 0.88);
+      --mini-border: rgba(232, 226, 212, 0.9);
+      --mini-text: #2D2A26;
+      --mini-text-secondary: #6E665A;
+      --mini-text-muted: #A39B8C;
+      --mini-accent: #E8B547;
+      --mini-pin: #E76F51;
+      --mini-danger: #E76F51;
+      --mini-hover: rgba(255, 251, 239, 0.9);
+      --mini-active: rgba(255, 242, 201, 0.95);
+      --mini-shadow: 0 6px 20px rgba(60, 50, 30, 0.18);
+    }
+    body.mini-mode {
+      background: transparent;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+        "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    body.mini-mode #app {
+      display: none;
+    }
+    body.mini-mode #mini-app {
+      display: flex !important;
+    }
+    #mini-app {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      flex-direction: column;
+      background: var(--mini-bg);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid var(--mini-border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--mini-shadow);
+      color: var(--mini-text);
+    }
+    .mini-header {
+      padding: 8px 12px;
+      background: var(--mini-header-bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--mini-border);
+      -webkit-app-region: drag;
+    }
+    .mini-header h3 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--mini-text);
+      margin: 0;
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .mini-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+    }
+    .mini-controls {
+      display: flex;
+      gap: 4px;
+      -webkit-app-region: no-drag;
+    }
+    .mini-btn {
+      width: 22px;
+      height: 22px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.55);
+      color: var(--mini-text-secondary);
+      transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+    }
+    .mini-btn:hover {
+      background: rgba(255, 255, 255, 0.95);
+      color: var(--mini-text);
+    }
+    .mini-btn:active {
+      transform: scale(0.94);
+    }
+    .mini-btn-pin.active {
+      background: var(--mini-pin);
+      color: #fff;
+    }
+    .mini-btn-close:hover {
+      background: var(--mini-danger);
+      color: #fff;
+    }
+    .mini-search {
+      padding: 8px 10px;
+      background: transparent;
+    }
+    .mini-search input {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.7);
+      color: var(--mini-text);
+      font-size: 12px;
+      transition: all 0.18s ease;
+    }
+    .mini-search input::placeholder {
+      color: var(--mini-text-muted);
+    }
+    .mini-search input:focus {
+      outline: none;
+      background: #fff;
+      border-color: var(--mini-accent);
+      box-shadow: 0 0 0 2px rgba(232, 181, 71, 0.22);
+    }
+    .mini-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 2px 6px 10px;
+    }
+    .mini-item {
+      padding: 8px 12px;
+      margin-bottom: 3px;
+      background: transparent;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.18s ease, transform 0.18s ease;
+      position: relative;
+    }
+    .mini-item:hover {
+      background: var(--mini-hover);
+    }
+    .mini-item:active {
+      background: var(--mini-active);
+    }
+    .mini-item.pinned {
+      padding-left: 18px;
+    }
+    .mini-item.pinned::before {
+      content: "";
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--mini-pin);
+    }
+    .mini-item-title {
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--mini-text);
+    }
+    .mini-empty {
+      text-align: center;
+      padding: 28px 16px;
+      color: var(--mini-text-muted);
+      font-size: 12px;
+    }
+    .mini-list::-webkit-scrollbar {
+      width: 6px;
+    }
+    .mini-list::-webkit-scrollbar-thumb {
+      background: rgba(110, 102, 90, 0.22);
+      border-radius: 3px;
+    }
+    .mini-list::-webkit-scrollbar-thumb:hover {
+      background: rgba(110, 102, 90, 0.4);
+    }
+    .mini-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+  </style>
+  <script type="module" crossorigin src="./js/app.js" id="main-app-script"></script>
+  <link rel="stylesheet" crossorigin href="./css/style.css" id="main-css">
+</head>
+<body>
+  <!-- Main App -->
+  <div id="app">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1><img src="/icon.png" class="app-icon" alt=""> 纸条</h1>
+        <button id="new-note-btn" class="btn-primary">+ 新建</button>
+      </div>
+      <div class="search-box">
+        <input type="text" id="search-input" placeholder="搜索便签...">
+      </div>
+      <div id="notes-list" class="notes-list"></div>
+      <div id="user-bar" class="user-bar hidden">
+        <span id="user-email-display" class="user-email"></span>
+        <button id="logout-btn" class="btn-logout">退出</button>
+      </div>
+    </aside>
+    <main class="main-content">
+      <div id="editor" class="editor hidden">
+        <div class="editor-header">
+          <input type="text" id="note-title" placeholder="标题">
+          <button id="save-btn" class="btn-primary hidden">保存</button>
+          <button id="edit-btn" class="btn-edit">编辑</button>
+          <button id="exit-edit-btn" class="btn-preview hidden">退出编辑</button>
+          <button id="delete-btn" class="btn-danger">删除</button>
+        </div>
+        <div id="editor-body" class="editor-body preview-mode">
+          <textarea id="note-content" placeholder="写点什么..."></textarea>
+          <div id="note-preview" class="note-preview"></div>
+        </div>
+      </div>
+      <div id="welcome" class="welcome">
+        <img src="/icon.png" class="welcome-icon" alt="">
+        <h2>欢迎使用纸条</h2>
+        <p>选择左侧便签开始编辑，或点击"新建"创建新便签</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Mini Mode (floating list) -->
+  <div id="mini-app">
+    <div class="mini-header">
+      <h3><img src="/icon.png" class="mini-icon" alt=""> 纸条</h3>
+      <div class="mini-controls">
+        <button id="btn-pin" class="mini-btn mini-btn-pin" title="置顶">📌</button>
+        <button id="btn-bottom" class="mini-btn mini-btn-bottom" title="置于底层">⬇️</button>
+        <button id="btn-close" class="mini-btn mini-btn-close" title="关闭">✕</button>
+      </div>
+    </div>
+    <div class="mini-search">
+      <input type="text" id="mini-search-input" placeholder="搜索...">
+    </div>
+    <div id="mini-list" class="mini-list"></div>
+  </div>
+
+  <!-- Login Overlay -->
+  <div id="login-overlay">
+    <div class="login-card">
+      <img src="/icon.png" class="login-icon" alt="">
+      <h2>纸条</h2>
+      <form id="login-form">
+        <input type="email" id="login-email" placeholder="邮箱" autocomplete="email">
+        <input type="password" id="login-password" placeholder="密码" autocomplete="current-password">
+        <button type="submit" class="btn-login-submit">登录</button>
+      </form>
+      <p class="login-switch">还没有账号？<a href="#" id="switch-to-register">立即注册</a></p>
+      <p id="login-error" class="login-error"></p>
+    </div>
+  </div>
+
+  <!-- Custom Dialog -->
+  <div id="app-dialog-overlay" class="dialog-overlay hidden">
+    <div class="dialog-card">
+      <p id="dialog-message" class="dialog-message"></p>
+      <div class="dialog-actions">
+        <button id="dialog-cancel-btn" class="btn-preview dialog-cancel">取消</button>
+        <button id="dialog-confirm-btn" class="btn-primary dialog-confirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { invoke } from '@tauri-apps/api/core';
+    import { emit, listen } from '@tauri-apps/api/event';
+    import { getCurrentWindow, getAllWindows } from '@tauri-apps/api/window';
+
+    console.log('[Mini] Script starting');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const isMiniMode = urlParams.get('mode') === 'mini';
+    console.log('[Mini] isMiniMode:', isMiniMode);
+
+    if (!isMiniMode) {
+      console.log('[Main] Not in mini mode, app.js will handle initialization');
+    } else {
+      document.body.classList.add('mini-mode');
+      const mainScript = document.getElementById('main-app-script');
+      const mainCss = document.getElementById('main-css');
+      if (mainScript) mainScript.remove();
+      if (mainCss) mainCss.remove();
+
+      let notes = [];
+      let isPinned = false;
+
+      async function getMainWindow() {
+        const windows = await getAllWindows();
+        return windows.find(w => w.label === 'main');
+      }
+
+      async function loadNotes() {
+        console.log('[Mini] loadNotes called');
+        try {
+          const result = await invoke('get_notes');
+          notes = result || [];
+          console.log('[Mini] Loaded notes:', notes.length);
+          renderNotes();
+        } catch (e) {
+          console.error('[Mini] Failed to load notes:', e);
+        }
+      }
+
+      function renderNotes(filter = '') {
+        console.log('[Mini] renderNotes called, notes:', notes.length);
+        const list = document.getElementById('mini-list');
+        if (!list) {
+          console.error('[Mini] mini-list not found!');
+          return;
+        }
+
+        const filtered = notes.filter(n =>
+          n.title.toLowerCase().includes(filter.toLowerCase())
+        );
+
+        if (filtered.length === 0) {
+          list.innerHTML = '<div class="mini-empty">暂无便签</div>';
+          return;
+        }
+
+        list.innerHTML = filtered.map(n => `
+          <div class="mini-item ${n.is_pinned ? 'pinned' : ''}" data-id="${n.id}">
+            <div class="mini-item-title">${escapeHtml(n.title)}</div>
+          </div>
+        `).join('');
+
+        list.querySelectorAll('.mini-item').forEach(item => {
+          item.onclick = () => openMainWindow(item.dataset.id);
+        });
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      async function openMainWindow(noteId) {
+        try {
+          console.log('[Mini] Calling show_main_window');
+          await invoke('show_main_window');
+          console.log('[Mini] show_main_window returned, waiting before emit...');
+          await new Promise(r => setTimeout(r, 500)); // Wait for window to initialize
+          await emit('open-note', noteId);
+          console.log('[Mini] open-note emitted');
+        } catch (e) {
+          console.error('[Mini] Failed to open main window:', e);
+        }
+      }
+
+      async function hideMiniWindow() {
+        console.log('[Mini] Hide button clicked');
+        try {
+          const cw = await getCurrentWindow();
+          await cw.hide();
+        } catch (e) {
+          console.error('[Mini] Failed to hide window:', e);
+        }
+      }
+
+      async function togglePin() {
+        console.log('[Mini] Pin button clicked');
+        try {
+          isPinned = !isPinned;
+          const btn = document.getElementById('btn-pin');
+          btn.classList.toggle('active', isPinned);
+          const result = await invoke('toggle_always_on_top', { windowLabel: 'mini' });
+          console.log('[Mini] Toggle always on top result:', result);
+        } catch (e) {
+          console.error('[Mini] Failed to toggle pin:', e);
+        }
+      }
+
+      async function setBottom() {
+        console.log('[Mini] Bottom button clicked');
+        try {
+          await invoke('set_window_level', { windowLabel: 'mini', level: 'bottom' });
+        } catch (e) {
+          console.error('[Mini] Failed to set bottom:', e);
+        }
+      }
+
+      console.log('[Mini] Setting up event listeners');
+      document.getElementById('btn-close').onclick = hideMiniWindow;
+      document.getElementById('btn-pin').onclick = togglePin;
+      document.getElementById('btn-bottom').onclick = setBottom;
+      document.getElementById('mini-search-input').oninput = (e) => renderNotes(e.target.value);
+
+      const header = document.querySelector('.mini-header');
+      if (header) {
+        let isDragging = false;
+        let startX, startY;
+
+        header.addEventListener('mousedown', (e) => {
+          if (e.target.classList.contains('mini-btn')) return;
+          isDragging = true;
+          startX = e.screenX;
+          startY = e.screenY;
+        });
+
+        document.addEventListener('mousemove', (e) => {
+          if (!isDragging) return;
+          getCurrentWindow().then(cw => {
+            if (cw && cw.outerPosition) {
+              cw.outerPosition({ x: e.screenX - startX, y: e.screenY - startY });
+            }
+          });
+        });
+
+        document.addEventListener('mouseup', () => {
+          isDragging = false;
+        });
+      }
+
+      listen('notes-updated', (event) => {
+        console.log('[Mini] Received notes-updated event:', event.payload);
+        loadNotes();
+      });
+
+      listen('auth-changed', (event) => {
+        console.log('[Mini] Auth changed:', event.payload);
+        if (!event.payload) {
+          notes = [];
+          renderNotes();
+          hideMiniWindow();
+        } else {
+          loadNotes();
+        }
+      });
+
+      async function initMini() {
+        try {
+          const userId = await invoke('get_current_user_id');
+          if (!userId) {
+            console.log('[Mini] Not authenticated, hiding');
+            notes = [];
+            renderNotes();
+            return;
+          }
+          await loadNotes();
+        } catch (e) {
+          console.error('[Mini] Auth check failed:', e);
+        }
+      }
+
+      initMini();
+      console.log('[Mini] Mini mode script initialized');
+    }
+  </script>
+</body>
+</html>
