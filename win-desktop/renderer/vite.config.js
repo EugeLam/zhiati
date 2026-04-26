@@ -3,11 +3,6 @@ import { resolve } from 'path';
 
 export default defineConfig({
   root: '.',
-  resolve: {
-    alias: {
-      '@tauri-apps/api': resolve(__dirname, '../../node_modules/@tauri-apps/api')
-    }
-  },
   server: {
     port: 5173,
     strictPort: true,

@@ -31,6 +31,7 @@ const switchLink = document.getElementById('switch-to-register');
 const userBar = document.getElementById('user-bar');
 const userEmailDisplay = document.getElementById('user-email-display');
 const logoutBtn = document.getElementById('logout-btn');
+const syncBtn = document.getElementById('sync-btn');
 const reminderBtn = document.getElementById('reminder-btn');
 const reminderPanel = document.getElementById('reminder-panel');
 const reminderList = document.getElementById('reminder-list');
@@ -595,6 +596,13 @@ window.addEventListener('resize', () => {
 });
 
 newNoteBtn.onclick = createNewNote;
+syncBtn.onclick = async () => {
+  const icon = syncBtn.querySelector('.sync-icon');
+  icon.classList.remove('spinning');
+  void icon.offsetWidth;
+  icon.classList.add('spinning');
+  await loadNotes();
+};
 saveBtn.onclick = saveNote;
 editBtn.onclick = toggleEdit;
 exitEditBtn.onclick = exitEdit;

@@ -4,6 +4,13 @@ use serde::Serialize;
 use shared::{ApiResponse, AuthResponse, LoginRequest, RegisterRequest};
 use tauri::{AppHandle, Emitter, State};
 
+fn build_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("Failed to build reqwest client")
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthResult {
     pub token: String,
@@ -20,7 +27,7 @@ pub async fn login(
 ) -> Result<AuthResult, String> {
     let server_url = state.server_url.lock().map_err(|e| e.to_string())?.clone();
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .post(format!("{}/api/auth/login", server_url))
         .json(&LoginRequest { email, password })
@@ -79,7 +86,7 @@ pub async fn register(
 ) -> Result<AuthResult, String> {
     let server_url = state.server_url.lock().map_err(|e| e.to_string())?.clone();
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .post(format!("{}/api/auth/register", server_url))
         .json(&RegisterRequest {

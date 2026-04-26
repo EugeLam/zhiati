@@ -4,7 +4,7 @@
   "identifier": "com.zhiati.desktop",
   "version": "0.1.0",
   "build": {
-    "beforeDevCommand": "cd renderer && npm run dev",
+    "beforeDevCommand": "",
     "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "cd renderer && npm run build",
     "frontendDist": "./renderer/dist"

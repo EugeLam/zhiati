@@ -108,6 +108,32 @@ body {
   transform: translateY(1px);
 }
 
+.btn-sync {
+  background: #FDF3C7;
+  color: #8B7E3C;
+  border: 1px solid #E8DA8E;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: all var(--duration) ease;
+}
+.btn-sync:hover {
+  background: #FCE8A4;
+  color: #6B6028;
+}
+.sync-icon {
+  display: inline-block;
+}
+.sync-icon.spinning {
+  animation: sync-spin 0.6s ease;
+}
+@keyframes sync-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 .btn-danger {
   background: transparent;
   color: var(--danger);
