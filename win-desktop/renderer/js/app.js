@@ -31,6 +31,12 @@ const switchLink = document.getElementById('switch-to-register');
 const userBar = document.getElementById('user-bar');
 const userEmailDisplay = document.getElementById('user-email-display');
 const logoutBtn = document.getElementById('logout-btn');
+const reminderBtn = document.getElementById('reminder-btn');
+const reminderPanel = document.getElementById('reminder-panel');
+const reminderList = document.getElementById('reminder-list');
+const reminderDatetime = document.getElementById('reminder-datetime');
+const reminderAddBtn = document.getElementById('reminder-add-btn');
+const reminderCloseBtn = document.getElementById('reminder-close-btn');
 
 let isRegisterMode = false;
 
@@ -277,6 +283,8 @@ async function selectNote(note) {
   isContentDirty = false;
   destroyEasyMDE();
   setPreviewMode();
+  reminderBtn.classList.remove('hidden');
+  reminderPanel.classList.add('hidden');
   renderNotes(searchInput.value);
   editor.classList.remove('hidden');
   welcome.classList.add('hidden');
@@ -301,6 +309,8 @@ async function createNewNote() {
   isContentDirty = false;
   destroyEasyMDE();
   setEditMode();
+  reminderBtn.classList.add('hidden');
+  reminderPanel.classList.add('hidden');
   editor.classList.remove('hidden');
   welcome.classList.add('hidden');
   noteTitle.focus();
@@ -434,6 +444,80 @@ async function deleteCurrentNote() {
   }
 }
 
+// --- Reminders ---
+
+async function loadReminders() {
+  if (!currentNote || !currentNote.id) return;
+  try {
+    const reminders = await invoke('get_reminders', { noteId: currentNote.id });
+    renderReminders(reminders);
+  } catch (e) {
+    console.error('[Main] Failed to load reminders:', e);
+  }
+}
+
+function renderReminders(reminders) {
+  reminderList.innerHTML = '';
+  if (!reminders || reminders.length === 0) {
+    reminderList.innerHTML = '<div class="reminder-empty">暂无提醒</div>';
+    return;
+  }
+
+  reminders.forEach(r => {
+    const item = document.createElement('div');
+    item.className = 'reminder-item';
+    const time = new Date(r.remind_at);
+    item.innerHTML = `
+      <span class="reminder-time">${time.toLocaleString('zh-CN')}</span>
+      <button class="reminder-delete" data-id="${r.id}" title="删除提醒">&times;</button>
+    `;
+    item.querySelector('.reminder-delete').onclick = async (e) => {
+      e.stopPropagation();
+      await deleteReminder(r.id);
+    };
+    reminderList.appendChild(item);
+  });
+}
+
+async function addReminder() {
+  if (!currentNote || !currentNote.id) return;
+  const datetime = reminderDatetime.value;
+  if (!datetime) {
+    await showAlert('请选择提醒时间');
+    return;
+  }
+
+  try {
+    await invoke('add_reminder', {
+      noteId: currentNote.id,
+      remindAt: new Date(datetime).toISOString(),
+      noteTitle: currentNote.title || '未命名便签',
+      noteContent: currentNote.content || '(无内容)'
+    });
+    reminderDatetime.value = '';
+    await loadReminders();
+  } catch (e) {
+    console.error('[Main] Failed to add reminder:', e);
+    await showAlert('添加提醒失败: ' + e);
+  }
+}
+
+async function deleteReminder(id) {
+  try {
+    await invoke('delete_reminder', { id });
+    await loadReminders();
+  } catch (e) {
+    console.error('[Main] Failed to delete reminder:', e);
+  }
+}
+
+function toggleReminderPanel() {
+  reminderPanel.classList.toggle('hidden');
+  if (!reminderPanel.classList.contains('hidden')) {
+    loadReminders();
+  }
+}
+
 function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
@@ -515,6 +599,20 @@ saveBtn.onclick = saveNote;
 editBtn.onclick = toggleEdit;
 exitEditBtn.onclick = exitEdit;
 deleteBtn.onclick = deleteCurrentNote;
+reminderBtn.onclick = toggleReminderPanel;
+reminderAddBtn.onclick = addReminder;
+reminderCloseBtn.onclick = () => reminderPanel.classList.add('hidden');
+
+const reminderTestBtn = document.getElementById('reminder-test-btn');
+reminderTestBtn.onclick = async () => {
+  try {
+    await invoke('test_reminder');
+    console.log('[Main] test_reminder invoked successfully');
+  } catch (e) {
+    console.error('[Main] test_reminder failed:', e);
+    await showAlert('测试失败: ' + e);
+  }
+};
 
 searchInput.oninput = (e) => {
   renderNotes(e.target.value);

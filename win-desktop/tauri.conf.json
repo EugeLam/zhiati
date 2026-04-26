@@ -37,6 +37,7 @@
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
+        "shadow": false,
         "visible": false,
         "url": "http://localhost:5173?mode=mini"
       }
