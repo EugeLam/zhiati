@@ -29,7 +29,13 @@
       -webkit-font-smoothing: antialiased;
     }
     body.mini-mode #app {
-      display: none;
+      display: none !important;
+    }
+    body.mini-mode #login-overlay {
+      display: none !important;
+    }
+    body.mini-mode #app-dialog-overlay {
+      display: none !important;
     }
     body.mini-mode #mini-app {
       display: flex !important;
@@ -48,7 +54,7 @@
       border: 1px solid var(--mini-border);
       border-radius: 12px;
       overflow: hidden;
-      box-shadow: var(--mini-shadow);
+      filter: drop-shadow(0 6px 20px rgba(60, 50, 30, 0.18));
       color: var(--mini-text);
     }
     .mini-header {
@@ -221,11 +227,25 @@
           <button id="save-btn" class="btn-primary hidden">保存</button>
           <button id="edit-btn" class="btn-edit">编辑</button>
           <button id="exit-edit-btn" class="btn-preview hidden">退出编辑</button>
+          <button id="reminder-btn" class="btn-reminder hidden" title="设置提醒">⏰</button>
           <button id="delete-btn" class="btn-danger">删除</button>
         </div>
         <div id="editor-body" class="editor-body preview-mode">
           <textarea id="note-content" placeholder="写点什么..."></textarea>
           <div id="note-preview" class="note-preview"></div>
+        </div>
+        <!-- Reminder Panel -->
+        <div id="reminder-panel" class="reminder-panel hidden">
+          <div class="reminder-panel-header">
+            <span>提醒设置</span>
+            <button id="reminder-close-btn" class="reminder-close">&times;</button>
+          </div>
+          <div id="reminder-list" class="reminder-list"></div>
+          <div class="reminder-add">
+            <input type="datetime-local" id="reminder-datetime">
+            <button id="reminder-add-btn" class="btn-primary">添加提醒</button>
+            <button id="reminder-test-btn" class="btn-secondary" style="margin-top:4px;width:100%;">测试提醒效果</button>
+          </div>
         </div>
       </div>
       <div id="welcome" class="welcome">

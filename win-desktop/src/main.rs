@@ -4,9 +4,13 @@ mod tray;
 mod commands;
 mod auth;
 mod config;
+mod scheduler;
+mod notification;
 
 use commands::AppState;
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc, atomic::AtomicBool};
+use crate::scheduler::Scheduler;
+use tauri::Manager;
 
 fn is_another_instance_running() -> bool {
     #[cfg(windows)]
@@ -39,7 +43,6 @@ fn is_another_instance_running() -> bool {
                 return true;
             }
 
-            // Raw pointer, no Drop — kernel handle stays alive until process exits
             let _leaked = handle;
             false
         }
@@ -57,35 +60,62 @@ fn main() {
 
     tracing::info!("[Rust] Application starting...");
 
-    // Single instance check (named mutex on Windows)
     if is_another_instance_running() {
         tracing::warn!("[Rust] Another instance is already running, exiting");
         std::process::exit(0);
     }
 
-    // Clean up legacy PID lock file
     let lock_path = config::config_dir().join("app.lock");
     let _ = std::fs::remove_file(&lock_path);
 
     let cfg = config::load_config();
     tracing::info!("[Rust] Config loaded, server_url: {}", cfg.server_url);
-    // Ensure config file exists so user can edit it
     let _ = config::save_config(&cfg);
+
+    let reminder_pending = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .manage(AppState {
-            server_url: Mutex::new(cfg.server_url),
+            server_url: Mutex::new(cfg.server_url.clone()),
             user_id: Mutex::new(cfg.user_id),
-            token: Mutex::new(cfg.token),
+            token: Mutex::new(cfg.token.clone()),
+            scheduler: Scheduler::new(),
+            reminder_pending: reminder_pending.clone(),
         })
-        .setup(|app| {
+        .setup(move |app| {
             tracing::info!("[Rust] App setup started");
-            if let Err(e) = tray::setup_tray(app.handle()) {
+
+            // Prevent main window from being destroyed on close — just hide it
+            if let Some(window) = app.get_webview_window("main") {
+                let cloned = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = cloned.hide();
+                    }
+                });
+            }
+
+            if let Err(e) = tray::setup_tray(app.handle(), reminder_pending.clone()) {
                 tracing::error!("[Rust] Failed to setup tray: {}", e);
             }
+
+            // Initialize reminder scheduler if user is logged in
+            let state = app.state::<AppState>();
+            let token = state.token.lock().unwrap().clone();
+            let app_h = app.handle().clone();
+            if token.is_some() {
+                tauri::async_runtime::spawn(async move {
+                    let state = app_h.state::<AppState>();
+                    let t = state.token.lock().unwrap().clone().unwrap_or_default();
+                    let url = state.server_url.lock().unwrap().clone();
+                    state.scheduler.init(app_h.clone(), &url, &t).await;
+                });
+            }
+
             tracing::info!("[Rust] App setup completed");
             Ok(())
         })
@@ -95,11 +125,15 @@ fn main() {
             commands::update_note,
             commands::delete_note,
             commands::sync_notes,
+            commands::get_reminders,
+            commands::add_reminder,
+            commands::delete_reminder,
             commands::show_mini_window,
             commands::hide_mini_window,
             commands::toggle_always_on_top,
             commands::set_window_level,
             commands::show_main_window,
+            commands::test_reminder,
             auth::login,
             auth::register,
             auth::logout,

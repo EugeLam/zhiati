@@ -7796,6 +7796,7 @@ dependencies = [
 name = "zhiati-desktop"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dirs 5.0.1",
  "reqwest 0.12.28",
  "serde",
@@ -7808,6 +7809,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "windows-sys 0.61.2",
  "zhiati-shared",
 ]

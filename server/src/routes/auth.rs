@@ -1,5 +1,5 @@
 use axum::{Json, extract::State};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use bcrypt::{hash, verify, DEFAULT_COST};
 use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey};
 use serde::{Serialize, Deserialize};

@@ -94,6 +94,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .execute(&pool)
     .await?;
 
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS reminders (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            remind_at TIMESTAMPTZ NOT NULL,
+            is_triggered BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await?;
+
     let state = AppState { db: pool, jwt_secret };
 
     let cors = CorsLayer::new()
@@ -104,6 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .nest("/api/auth", routes::auth_routes())
         .nest("/api/notes", routes::notes_routes())
+        .nest("/api/reminders", routes::reminders_routes())
         .route("/health", axum::routing::get(health_check))
         .layer(cors)
         .with_state(state);

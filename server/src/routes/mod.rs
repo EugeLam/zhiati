@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod notes;
+pub mod reminders;
 
 use axum::Router;
 use crate::AppState;
@@ -18,4 +19,13 @@ pub fn notes_routes() -> Router<AppState> {
         .route("/:id", axum::routing::put(notes::update))
         .route("/:id", axum::routing::delete(notes::delete))
         .route("/sync", axum::routing::post(notes::sync))
+}
+
+pub fn reminders_routes() -> Router<AppState> {
+    Router::new()
+        .route("/", axum::routing::get(reminders::list))
+        .route("/", axum::routing::post(reminders::create))
+        .route("/:id", axum::routing::put(reminders::update))
+        .route("/:id", axum::routing::delete(reminders::delete))
+        .route("/:id/trigger", axum::routing::post(reminders::mark_triggered))
 }

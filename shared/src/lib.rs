@@ -59,6 +59,21 @@ pub struct NoteTag {
     pub tag_id: Uuid,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Reminder {
+    pub id: Uuid,
+    pub note_id: Uuid,
+    pub user_id: Uuid,
+    pub remind_at: DateTime<Utc>,
+    pub is_triggered: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub note_title: Option<String>,
+    #[serde(default)]
+    pub note_content: Option<String>,
+}
+
 // API request/response types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterRequest {
@@ -92,6 +107,17 @@ pub struct UpdateNoteRequest {
     pub is_pinned: Option<bool>,
     pub is_archived: Option<bool>,
     pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateReminderRequest {
+    pub note_id: Uuid,
+    pub remind_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateReminderRequest {
+    pub remind_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
