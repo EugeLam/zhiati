@@ -95,6 +95,17 @@ CREATE TABLE note_tags (
     tag_id UUID REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (note_id, tag_id)
 );
+
+-- 提醒表
+CREATE TABLE reminders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    note_id UUID NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    remind_at TIMESTAMPTZ NOT NULL,
+    is_triggered BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 ```
 
 ---
@@ -111,6 +122,11 @@ CREATE TABLE note_tags (
 | PUT | /api/notes/:id | 更新便签 |
 | DELETE | /api/notes/:id | 删除便签 |
 | POST | /api/notes/sync | 批量同步 |
+| GET | /api/reminders | 获取提醒列表 |
+| POST | /api/reminders | 创建提醒 |
+| PUT | /api/reminders/:id | 更新提醒 |
+| DELETE | /api/reminders/:id | 删除提醒 |
+| POST | /api/reminders/:id/trigger | 标记提醒已触发 |
 
 ---
 
@@ -121,32 +137,38 @@ zhiati/
 ├── docs/
 │   ├── SPEC.md
 │   └── FUTURE_FEATURES.md
-├── cli/                     # Rust CLI工具
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs
-│       ├── commands/
-│       └── api/
-├── desktop/                 # Tauri桌面应用
-│   ├── Cargo.toml
-│   ├── src/
-│   │   ├── main.rs
-│   │   ├── lib.rs
-│   │   └── ...
-│   ├── src/main/           # 主进程
-│   ├── src/renderer/       # 渲染进程 (前端)
-│   └── src/preload/        # 预加载脚本
-├── server/                  # Rust后端服务
+├── server/                  # Rust后端服务 (axum)
 │   ├── Cargo.toml
 │   └── src/
 │       ├── main.rs
 │       ├── routes/
-│       ├── middleware/
-│       └── services/
-├── shared/                   # 共享类型
+│       │   ├── mod.rs
+│       │   ├── auth.rs
+│       │   ├── notes.rs
+│       │   └── reminders.rs
+│       └── middleware/
+├── win-desktop/             # Tauri桌面应用 (Windows)
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
+│   ├── src/
+│   │   ├── main.rs
+│   │   ├── lib.rs
+│   │   ├── commands.rs
+│   │   ├── tray.rs
+│   │   ├── scheduler.rs
+│   │   ├── notification.rs
+│   │   ├── auth.rs
+│   │   └── config.rs
+│   └── renderer/            # 前端 (Vite + vanilla JS)
+│       ├── index.html
+│       ├── js/
+│       │   └── app.js
+│       └── css/
+│           └── style.css
+├── shared/                  # 共享类型
 │   └── src/
 │       └── lib.rs
-└── package.json
+└── target/                  # 构建产物
 ```
 
 ---
@@ -160,5 +182,5 @@ zhiati/
 
 ---
 
-*文档版本: v0.1*
-*创建日期: 2026-04-21*
+*文档版本: v0.2*
+*更新日期: 2026-04-26*
