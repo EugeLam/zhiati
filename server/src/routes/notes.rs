@@ -2,6 +2,7 @@ use axum::{
     Json, extract::{State, Path},
     http::{header::AUTHORIZATION, HeaderMap},
 };
+use minio::s3::types::S3Api;
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -152,6 +153,19 @@ pub async fn delete(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
     let user_id = extract_user_id_from_headers(&headers, &state.jwt_secret)?;
+
+    let keys: Vec<(String,)> = sqlx::query_as(
+        "SELECT s3_key FROM attachments WHERE note_id = $1",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+
+    for (s3_key,) in keys {
+        if let Ok(builder) = state.s3_client.delete_object(&state.minio_bucket, s3_key.as_str()) {
+            let _ = builder.build().send().await;
+        }
+    }
 
     let result = sqlx::query(
         "DELETE FROM notes WHERE id = $1 AND user_id = $2",

@@ -53,3 +53,4 @@ impl From<jsonwebtoken::errors::Error> for AppError {
         AppError::Unauthorized(err.to_string())
     }
 }
+

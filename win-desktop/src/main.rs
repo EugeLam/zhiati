@@ -78,6 +78,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             server_url: Mutex::new(cfg.server_url.clone()),
             user_id: Mutex::new(cfg.user_id),
@@ -134,6 +135,7 @@ fn main() {
             commands::set_window_level,
             commands::show_main_window,
             commands::test_reminder,
+            commands::upload_image,
             auth::login,
             auth::register,
             auth::logout,

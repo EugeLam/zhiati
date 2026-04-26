@@ -182,3 +182,23 @@ impl From<Note> for CliNoteOutput {
         }
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Attachment {
+    pub id: Uuid,
+    pub note_id: Uuid,
+    pub user_id: Uuid,
+    pub filename: String,
+    pub mime_type: Option<String>,
+    pub size: i64,
+    pub s3_key: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachmentUploadResponse {
+    pub id: Uuid,
+    pub filename: String,
+    pub url: String,
+    pub size: i64,
+}

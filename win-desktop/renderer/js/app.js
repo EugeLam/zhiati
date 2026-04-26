@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
 import EasyMDE from 'easymde';
 import { marked } from 'marked';
 
@@ -118,6 +119,7 @@ async function handleLoginSubmit(e) {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
   loginError.textContent = '';
+  console.log('[Login] Attempting login, email:', email, 'mode:', isRegisterMode ? 'register' : 'login');
 
   if (!email || !password) {
     loginError.textContent = '请输入邮箱和密码';
@@ -126,16 +128,21 @@ async function handleLoginSubmit(e) {
 
   try {
     const cmd = isRegisterMode ? 'register' : 'login';
+    console.log('[Login] Invoking:', cmd);
     const result = await invoke(cmd, { email, password });
+    console.log('[Login] Success, email:', result.email);
     currentUserEmail = result.email;
     loginOverlay.classList.add('hidden');
     document.getElementById('app').style.display = 'flex';
     userBar.classList.remove('hidden');
     userEmailDisplay.textContent = result.email;
     document.getElementById('login-password').value = '';
+    console.log('[Login] Loading notes...');
     await loadNotes();
+    console.log('[Login] Emitting auth-changed');
     await emit('auth-changed', true);
   } catch (err) {
+    console.error('[Login] Failed:', err);
     loginError.textContent = typeof err === 'string' ? err : '操作失败，请检查网络连接';
   }
 }
@@ -231,7 +238,14 @@ function initEasyMDE() {
     element: noteContent,
     spellChecker: false,
     placeholder: '写点什么...',
-    toolbar: ['bold', 'italic', 'heading', '|', 'quote', 'unordered-list', 'ordered-list', '|', 'link', 'image', 'code', 'table', '|',
+    toolbar: ['bold', 'italic', 'heading', '|', 'quote', 'unordered-list', 'ordered-list', '|', 'link',
+      {
+        name: 'upload-image',
+        action: handleImageUpload,
+        className: 'fa fa-picture-o',
+        title: '上传图片',
+      },
+      'code', 'table', '|',
       {
         name: 'preview-toggle',
         action: togglePreviewPanel,
@@ -270,6 +284,34 @@ function destroyEasyMDE() {
   if (easyMDE) {
     easyMDE.toTextArea();
     easyMDE = null;
+  }
+}
+
+async function handleImageUpload(editor) {
+  if (!currentNote || !currentNote.id) {
+    await showAlert('请先保存便签再上传图片');
+    return;
+  }
+
+  const filePath = await open({
+    multiple: false,
+    filters: [{
+      name: 'Images',
+      extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+    }],
+  });
+
+  if (!filePath) return;
+
+  try {
+    const result = await invoke('upload_image', { filePath, noteId: currentNote.id });
+    const markdown = `![${result.filename}](${result.url})`;
+    if (easyMDE) {
+      easyMDE.codemirror.replaceSelection(markdown + '\n');
+    }
+  } catch (err) {
+    console.error('[Main] Image upload failed:', err);
+    await showAlert('图片上传失败: ' + (typeof err === 'string' ? err : '未知错误'));
   }
 }
 
