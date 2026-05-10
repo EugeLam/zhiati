@@ -6,6 +6,8 @@ mod auth;
 mod config;
 mod scheduler;
 mod notification;
+mod crypto;
+mod db;
 
 use commands::AppState;
 use std::sync::{Mutex, Arc, atomic::AtomicBool};
@@ -72,6 +74,24 @@ fn main() {
     tracing::info!("[Rust] Config loaded, server_url: {}", cfg.server_url);
     let _ = config::save_config(&cfg);
 
+    // Initialize SQLite database
+    let db_path = config::config_dir().join("zhiati.db");
+    let _ = std::fs::create_dir_all(config::config_dir());
+    let db = {
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        rt.block_on(async {
+            db::init_db(&db_path).await
+        })
+    };
+
+    let db = match db {
+        Ok(pool) => pool,
+        Err(e) => {
+            tracing::error!("[Rust] Failed to initialize local database: {}", e);
+            std::process::exit(1);
+        }
+    };
+
     let reminder_pending = Arc::new(AtomicBool::new(false));
 
     tauri::Builder::default()
@@ -81,10 +101,12 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             server_url: Mutex::new(cfg.server_url.clone()),
-            user_id: Mutex::new(cfg.user_id),
+            user_id: Mutex::new(cfg.user_id.clone()),
             token: Mutex::new(cfg.token.clone()),
             scheduler: Scheduler::new(),
             reminder_pending: reminder_pending.clone(),
+            db,
+            cloud_enabled: Mutex::new(cfg.cloud_enabled),
         })
         .setup(move |app| {
             tracing::info!("[Rust] App setup started");
@@ -104,16 +126,56 @@ fn main() {
                 tracing::error!("[Rust] Failed to setup tray: {}", e);
             }
 
-            // Initialize reminder scheduler if user is logged in
-            let state = app.state::<AppState>();
-            let token = state.token.lock().unwrap().clone();
+            // Transparent cloud auth if local credentials exist and cloud is enabled
             let app_h = app.handle().clone();
-            if token.is_some() {
+            let local_email = cfg.local_email.clone();
+            let local_password_encrypted = cfg.local_password_encrypted.clone();
+            let cloud_enabled = cfg.cloud_enabled;
+
+            if cloud_enabled && local_email.is_some() && local_password_encrypted.is_some() {
+                let email = local_email.unwrap();
+                let encrypted_pw = local_password_encrypted.unwrap();
                 tauri::async_runtime::spawn(async move {
-                    let state = app_h.state::<AppState>();
-                    let t = state.token.lock().unwrap().clone().unwrap_or_default();
+                    // Try to decrypt and authenticate
+                    match crypto::decrypt_password(&encrypted_pw) {
+                        Ok(password) => {
+                            let state = app_h.state::<AppState>();
+                            match auth::transparent_cloud_login(
+                                app_h.clone(),
+                                state.clone(),
+                                email,
+                                password,
+                            ).await {
+                                Ok(result) => {
+                                    tracing::info!("[Rust] Transparent cloud login succeeded for {}", result.email);
+                                    // Sync notes after login
+                                    let _ = commands::sync_notes(state.clone()).await;
+                                    // Initialize scheduler
+                                    let state = app_h.state::<AppState>();
+                                    let url = state.server_url.lock().unwrap().clone();
+                                    let token = state.token.lock().unwrap().clone().unwrap_or_default();
+                                    state.scheduler.init(app_h.clone(), &url, &token).await;
+                                }
+                                Err(e) => {
+                                    tracing::warn!("[Rust] Transparent cloud login failed: {}. Continuing in local-only mode.", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("[Rust] Failed to decrypt local password: {}", e);
+                        }
+                    }
+                });
+            } else if cloud_enabled && cfg.token.is_some() {
+                // Existing cloud session without local credentials
+                let app_h2 = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app_h2.state::<AppState>();
                     let url = state.server_url.lock().unwrap().clone();
-                    state.scheduler.init(app_h.clone(), &url, &t).await;
+                    let token = state.token.lock().unwrap().clone().unwrap_or_default();
+                    state.scheduler.init(app_h2.clone(), &url, &token).await;
+                    // Also sync notes
+                    let _ = commands::sync_notes(state.clone()).await;
                 });
             }
 
@@ -136,6 +198,9 @@ fn main() {
             commands::show_main_window,
             commands::test_reminder,
             commands::upload_image,
+            commands::get_app_mode,
+            commands::setup_local_account,
+            commands::toggle_cloud,
             auth::login,
             auth::register,
             auth::logout,

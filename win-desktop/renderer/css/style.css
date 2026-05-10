@@ -1088,3 +1088,58 @@ body {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(232, 181, 71, 0.18);
 }
+
+/* Toggle Switch */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+.toggle-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.switch-wrapper {
+  cursor: pointer;
+  display: block;
+  line-height: 0;
+}
+.switch-wrapper input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.toggle-slider {
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  background: #ccc;
+  border-radius: 11px;
+  position: relative;
+  transition: background 0.2s ease;
+}
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.switch-wrapper input:checked + .toggle-slider {
+  background: var(--accent);
+}
+.switch-wrapper input:checked + .toggle-slider::after {
+  transform: translateX(18px);
+}
+.login-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 12px;
+}

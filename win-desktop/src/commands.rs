@@ -1,5 +1,6 @@
 use std::sync::{Mutex, Arc, atomic::{AtomicBool, Ordering}};
 use shared::{ApiResponse, CreateNoteRequest, UpdateNoteRequest, Note, Reminder, CreateReminderRequest};
+use sqlx::SqlitePool;
 use tauri::Manager;
 use crate::scheduler::Scheduler;
 
@@ -9,6 +10,8 @@ pub struct AppState {
     pub token: Mutex<Option<String>>,
     pub scheduler: Scheduler,
     pub reminder_pending: Arc<AtomicBool>,
+    pub db: SqlitePool,
+    pub cloud_enabled: Mutex<bool>,
 }
 
 fn get_token(state: &AppState) -> Result<String, String> {
@@ -40,30 +43,8 @@ fn build_client() -> reqwest::Client {
 pub async fn get_notes(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<Note>, String> {
-    tracing::info!("[Rust] get_notes called");
-
-    let server_url = get_server_url(&state)?;
-    let token = get_token(&state)?;
-
-    let client = build_client();
-    let resp = client
-        .get(format!("{}/api/notes", server_url))
-        .header("Authorization", auth_header(&token))
-        .send()
-        .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err("服务器返回错误".to_string());
-    }
-
-    let body: ApiResponse<Vec<Note>> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败: {}", e))?;
-
-    let notes = body.data.unwrap_or_default();
-    tracing::info!("[Rust] Returning {} notes", notes.len());
+    let notes = crate::db::get_notes(&state.db).await?;
+    tracing::info!("[Rust] Returning {} notes from local DB", notes.len());
     Ok(notes)
 }
 
@@ -75,37 +56,45 @@ pub async fn create_note(
     color: Option<String>,
 ) -> Result<Note, String> {
     let title = if title.trim().is_empty() { "未命名便签" } else { &title };
+    let user_id_str = state.user_id.lock().map_err(|e| e.to_string())?.clone().unwrap_or_default();
+    let user_id = uuid::Uuid::parse_str(&user_id_str).unwrap_or(uuid::Uuid::nil());
 
-    let server_url = get_server_url(&state)?;
-    let token = get_token(&state)?;
+    let now = chrono::Utc::now();
+    let note = shared::Note {
+        id: uuid::Uuid::new_v4(),
+        user_id,
+        title: title.to_string(),
+        content: Some(content),
+        is_pinned: false,
+        is_archived: false,
+        color: color.unwrap_or_else(|| "#FFFB00".to_string()),
+        created_at: now,
+        updated_at: now,
+        synced_at: None,
+    };
 
-    let client = build_client();
-    let resp = client
-        .post(format!("{}/api/notes", server_url))
-        .header("Authorization", auth_header(&token))
-        .json(&CreateNoteRequest {
-            title: title.to_string(),
-            content: Some(content),
-            color,
-        })
-        .send()
-        .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
+    // Always write to local DB first
+    crate::db::create_note(&state.db, &note).await?;
 
-    if !resp.status().is_success() {
-        let body: ApiResponse<Note> = resp
-            .json()
-            .await
-            .unwrap_or_else(|_| ApiResponse::error("Unknown error".into()));
-        return Err(body.error.unwrap_or_else(|| "创建便签失败".into()));
+    // Optionally push to cloud
+    let cloud_on = *state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+    if cloud_on {
+        if let (Ok(server_url), Ok(token)) = (get_server_url(&state), get_token(&state)) {
+            let client = build_client();
+            let _ = client
+                .post(format!("{}/api/notes", server_url))
+                .header("Authorization", auth_header(&token))
+                .json(&CreateNoteRequest {
+                    title: note.title.clone(),
+                    content: note.content.clone(),
+                    color: Some(note.color.clone()),
+                })
+                .send()
+                .await;
+        }
     }
 
-    let body: ApiResponse<Note> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败: {}", e))?;
-
-    body.data.ok_or_else(|| "无效响应".to_string())
+    Ok(note)
 }
 
 #[tauri::command]
@@ -116,34 +105,41 @@ pub async fn update_note(
     content: String,
     color: Option<String>,
 ) -> Result<Note, String> {
-    let server_url = get_server_url(&state)?;
-    let token = get_token(&state)?;
+    // Read existing note from local DB
+    let existing = crate::db::get_note_by_id(&state.db, &id).await?;
+    let mut note = existing.ok_or_else(|| format!("便签 {} 不存在", id))?;
 
-    let client = build_client();
-    let resp = client
-        .put(format!("{}/api/notes/{}", server_url, id))
-        .header("Authorization", auth_header(&token))
-        .json(&UpdateNoteRequest {
-            title: Some(title),
-            content: Some(content),
-            is_pinned: None,
-            is_archived: None,
-            color,
-        })
-        .send()
-        .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
+    note.title = title;
+    note.content = Some(content);
+    if let Some(c) = color {
+        note.color = c;
+    }
+    note.updated_at = chrono::Utc::now();
 
-    if !resp.status().is_success() {
-        return Err("服务器返回错误".to_string());
+    // Update local DB
+    crate::db::update_note(&state.db, &note).await?;
+
+    // Optionally push to cloud
+    let cloud_on = *state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+    if cloud_on {
+        if let (Ok(server_url), Ok(token)) = (get_server_url(&state), get_token(&state)) {
+            let client = build_client();
+            let _ = client
+                .put(format!("{}/api/notes/{}", server_url, id))
+                .header("Authorization", auth_header(&token))
+                .json(&UpdateNoteRequest {
+                    title: Some(note.title.clone()),
+                    content: note.content.clone(),
+                    is_pinned: None,
+                    is_archived: None,
+                    color: Some(note.color.clone()),
+                })
+                .send()
+                .await;
+        }
     }
 
-    let body: ApiResponse<Note> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败: {}", e))?;
-
-    body.data.ok_or_else(|| "无效响应".to_string())
+    Ok(note)
 }
 
 #[tauri::command]
@@ -151,19 +147,20 @@ pub async fn delete_note(
     state: tauri::State<'_, AppState>,
     id: String,
 ) -> Result<(), String> {
-    let server_url = get_server_url(&state)?;
-    let token = get_token(&state)?;
+    // Delete from local DB (also deletes related reminders and note_tags)
+    crate::db::delete_note(&state.db, &id).await?;
 
-    let client = build_client();
-    let resp = client
-        .delete(format!("{}/api/notes/{}", server_url, id))
-        .header("Authorization", auth_header(&token))
-        .send()
-        .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err("删除失败".to_string());
+    // Optionally delete from cloud
+    let cloud_on = *state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+    if cloud_on {
+        if let (Ok(server_url), Ok(token)) = (get_server_url(&state), get_token(&state)) {
+            let client = build_client();
+            let _ = client
+                .delete(format!("{}/api/notes/{}", server_url, id))
+                .header("Authorization", auth_header(&token))
+                .send()
+                .await;
+        }
     }
 
     Ok(())
@@ -173,7 +170,55 @@ pub async fn delete_note(
 pub async fn sync_notes(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<Note>, String> {
-    get_notes(state).await
+    let cloud_on = *state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+
+    if cloud_on {
+        // Cloud mode: push local notes to server, pull server state back
+        let token = match get_token(&state) {
+            Ok(t) => t,
+            Err(_) => {
+                // No cloud token, just reload from local
+                return crate::db::get_notes(&state.db).await;
+            }
+        };
+        let server_url = get_server_url(&state)?;
+
+        // Push local notes to server
+        let local_notes = crate::db::get_notes(&state.db).await?;
+        let last_synced = crate::db::get_last_synced_at(&state.db).await?;
+
+        let client = build_client();
+        let sync_req = shared::SyncRequest {
+            notes: local_notes,
+            last_synced_at: last_synced,
+        };
+        let resp = client
+            .post(format!("{}/api/notes/sync", server_url))
+            .header("Authorization", auth_header(&token))
+            .json(&sync_req)
+            .send()
+            .await
+            .map_err(|e| format!("同步失败: 无法连接到服务器: {}", e))?;
+
+        if resp.status().is_success() {
+            let body: ApiResponse<shared::SyncResponse> = resp
+                .json()
+                .await
+                .map_err(|e| format!("解析同步响应失败: {}", e))?;
+            if let Some(sync_resp) = body.data {
+                // Upsert all server notes into local DB
+                crate::db::upsert_all_notes(&state.db, &sync_resp.notes).await?;
+                crate::db::set_last_synced_at(&state.db, sync_resp.synced_at).await?;
+                return Ok(sync_resp.notes);
+            }
+        }
+
+        // If sync failed, just return local notes
+        crate::db::get_notes(&state.db).await
+    } else {
+        // Local-only mode: just reload from local DB (refresh)
+        crate::db::get_notes(&state.db).await
+    }
 }
 
 #[tauri::command]
@@ -182,28 +227,7 @@ pub async fn get_reminders(
     note_id: String,
 ) -> Result<Vec<Reminder>, String> {
     tracing::info!("[Rust] get_reminders called for note: {}", note_id);
-
-    let server_url = get_server_url(&state)?;
-    let token = get_token(&state)?;
-
-    let client = build_client();
-    let resp = client
-        .get(format!("{}/api/reminders?note_id={}", server_url, note_id))
-        .header("Authorization", auth_header(&token))
-        .send()
-        .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Ok(vec![]);
-    }
-
-    let body: ApiResponse<Vec<Reminder>> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败: {}", e))?;
-
-    Ok(body.data.unwrap_or_default())
+    crate::db::get_reminders(&state.db, Some(&note_id)).await
 }
 
 #[tauri::command]
@@ -217,9 +241,6 @@ pub async fn add_reminder(
 ) -> Result<Reminder, String> {
     tracing::info!("[Rust] add_reminder called for note: {}", note_id);
 
-    let server_url = get_server_url(&state)?;
-    let token = get_token(&state)?;
-
     let remind_dt: chrono::DateTime<chrono::Utc> = remind_at
         .parse()
         .map_err(|e| format!("无效的时间格式: {}", e))?;
@@ -227,42 +248,51 @@ pub async fn add_reminder(
     let note_uuid = uuid::Uuid::parse_str(&note_id)
         .map_err(|e| format!("无效的便签ID: {}", e))?;
 
-    let client = build_client();
-    let resp = client
-        .post(format!("{}/api/reminders", server_url))
-        .header("Authorization", auth_header(&token))
-        .json(&CreateReminderRequest {
-            note_id: note_uuid,
-            remind_at: remind_dt,
-        })
-        .send()
-        .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
+    let user_id_str = state.user_id.lock().map_err(|e| e.to_string())?.clone().unwrap_or_default();
+    let user_id = uuid::Uuid::parse_str(&user_id_str).unwrap_or(uuid::Uuid::nil());
+    let now = chrono::Utc::now();
 
-    if !resp.status().is_success() {
-        let body: ApiResponse<Reminder> = resp
-            .json()
-            .await
-            .unwrap_or_else(|_| ApiResponse::error("Unknown error".into()));
-        return Err(body.error.unwrap_or_else(|| "创建提醒失败".into()));
-    }
+    let reminder = Reminder {
+        id: uuid::Uuid::new_v4(),
+        note_id: note_uuid,
+        user_id,
+        remind_at: remind_dt,
+        is_triggered: false,
+        created_at: now,
+        updated_at: now,
+        note_title: Some(note_title),
+        note_content: Some(note_content),
+    };
 
-    let body: ApiResponse<Reminder> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败: {}", e))?;
-
-    let reminder = body.data.ok_or_else(|| "无效响应".to_string())?;
+    // Save to local DB
+    crate::db::create_reminder(&state.db, &reminder).await?;
 
     // Schedule local timer
+    let server_url = state.server_url.lock().map_err(|e| e.to_string())?.clone();
+    let token = state.token.lock().map_err(|e| e.to_string())?.clone().unwrap_or_default();
     state.scheduler.schedule(
         app.clone(),
         reminder.clone(),
-        server_url,
-        token,
-        note_title,
-        note_content,
+        server_url.clone(),
+        token.clone(),
+        reminder.note_title.clone().unwrap_or_default(),
+        reminder.note_content.clone().unwrap_or_default(),
     );
+
+    // Optionally push to cloud
+    let cloud_on = *state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+    if cloud_on && !token.is_empty() {
+        let client = build_client();
+        let _ = client
+            .post(format!("{}/api/reminders", server_url))
+            .header("Authorization", auth_header(&token))
+            .json(&CreateReminderRequest {
+                note_id: note_uuid,
+                remind_at: remind_dt,
+            })
+            .send()
+            .await;
+    }
 
     tracing::info!("[Rust] Reminder created with id: {}", reminder.id);
     Ok(reminder)
@@ -275,26 +305,25 @@ pub async fn delete_reminder(
 ) -> Result<(), String> {
     tracing::info!("[Rust] delete_reminder called with id: {}", id);
 
-    let server_url = get_server_url(&state)?;
-    let token = get_token(&state)?;
+    // Cancel local timer
+    state.scheduler.cancel(&id);
 
-    let client = build_client();
-    let resp = client
-        .delete(format!("{}/api/reminders/{}", server_url, id))
-        .header("Authorization", auth_header(&token))
-        .send()
-        .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
+    // Delete from local DB
+    crate::db::delete_reminder(&state.db, &id).await?;
 
-    if !resp.status().is_success() {
-        let body: ApiResponse<()> = resp
-            .json()
-            .await
-            .unwrap_or_else(|_| ApiResponse::error("Unknown error".into()));
-        return Err(body.error.unwrap_or_else(|| "删除提醒失败".into()));
+    // Optionally delete from cloud
+    let cloud_on = *state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+    if cloud_on {
+        if let (Ok(server_url), Ok(token)) = (get_server_url(&state), get_token(&state)) {
+            let client = build_client();
+            let _ = client
+                .delete(format!("{}/api/reminders/{}", server_url, id))
+                .header("Authorization", auth_header(&token))
+                .send()
+                .await;
+        }
     }
 
-    state.scheduler.cancel(&id);
     Ok(())
 }
 
@@ -501,4 +530,61 @@ pub async fn upload_image(
         filename: data.filename,
         url: data.url,
     })
+}
+
+#[derive(serde::Serialize)]
+pub struct AppMode {
+    pub cloud_enabled: bool,
+    pub is_cloud_connected: bool,
+    pub local_account_exists: bool,
+}
+
+#[tauri::command]
+pub async fn get_app_mode(state: tauri::State<'_, AppState>) -> Result<AppMode, String> {
+    let cloud_on = *state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+    let cloud_connected = state.token.lock().map_err(|e| e.to_string())?.is_some();
+    let cfg = crate::config::load_config();
+    let local_account_exists = cfg.local_email.is_some() && cfg.local_password_encrypted.is_some();
+    Ok(AppMode {
+        cloud_enabled: cloud_on,
+        is_cloud_connected: cloud_connected,
+        local_account_exists,
+    })
+}
+
+#[tauri::command]
+pub async fn setup_local_account(
+    email: String,
+    password: String,
+) -> Result<(), String> {
+    let mut cfg = crate::config::load_config();
+    cfg.local_email = Some(email);
+    cfg.local_password_encrypted = Some(crate::crypto::encrypt_password(&password));
+    crate::config::save_config(&cfg)
+}
+
+#[tauri::command]
+pub async fn toggle_cloud(state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    {
+        let mut cloud = state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+        *cloud = enabled;
+    }
+    let mut cfg = crate::config::load_config();
+    cfg.cloud_enabled = enabled;
+    if !enabled {
+        // When disabling cloud, clear cloud token but keep local credentials
+        cfg.token = None;
+        cfg.user_id = None;
+    }
+    crate::config::save_config(&cfg)?;
+
+    // Also update state's token/user_id
+    if !enabled {
+        let mut token = state.token.lock().map_err(|e| e.to_string())?;
+        *token = None;
+        let mut user_id = state.user_id.lock().map_err(|e| e.to_string())?;
+        *user_id = None;
+    }
+
+    Ok(())
 }

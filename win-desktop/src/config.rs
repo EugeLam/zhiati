@@ -9,10 +9,20 @@ pub struct Config {
     pub token: Option<String>,
     pub user_id: Option<String>,
     pub user_email: Option<String>,
+    #[serde(default)]
+    pub local_email: Option<String>,
+    #[serde(default)]
+    pub local_password_encrypted: Option<String>,
+    #[serde(default = "default_true")]
+    pub cloud_enabled: bool,
 }
 
 fn default_server_url() -> String {
     "http://localhost:8080".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -22,6 +32,9 @@ impl Default for Config {
             token: None,
             user_id: None,
             user_email: None,
+            local_email: None,
+            local_password_encrypted: None,
+            cloud_enabled: true,
         }
     }
 }

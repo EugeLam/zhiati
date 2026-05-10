@@ -84,16 +84,26 @@ dialogCancelBtn.onclick = () => closeDialog(false);
 
 // --- Auth ---
 
+let appMode = null; // { cloud_enabled, is_cloud_connected, local_account_exists }
+
 async function checkAuth() {
   try {
-    const userId = await invoke('get_current_user_id');
-    if (userId) {
+    appMode = await invoke('get_app_mode');
+    console.log('[Auth] App mode:', appMode);
+
+    if (appMode.local_account_exists) {
+      // Local account exists, enter app directly
       const email = await invoke('get_current_user_email');
       currentUserEmail = email;
       loginOverlay.classList.add('hidden');
       document.getElementById('app').style.display = 'flex';
-      userBar.classList.remove('hidden');
-      userEmailDisplay.textContent = email || '';
+      if (appMode.is_cloud_connected) {
+        userBar.classList.remove('hidden');
+        userEmailDisplay.textContent = email || '';
+      } else {
+        userBar.classList.add('hidden');
+      }
+      updateSyncButtonText();
       await loadNotes();
       return true;
     }
@@ -113,6 +123,13 @@ function showLogin() {
   renderNotes();
   editor.classList.add('hidden');
   welcome.classList.remove('hidden');
+  // Change form to local account setup
+  const formTitle = document.querySelector('#login-overlay h2');
+  if (formTitle) formTitle.textContent = '设置本地账号';
+  const submitBtn = loginForm.querySelector('button');
+  if (submitBtn) submitBtn.textContent = '开始使用';
+  switchLink.parentElement.innerHTML = '<span class="login-hint">账号信息仅保存在本地，安全加密存储</span>';
+  updateSyncButtonText();
 }
 
 async function handleLoginSubmit(e) {
@@ -120,7 +137,7 @@ async function handleLoginSubmit(e) {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
   loginError.textContent = '';
-  console.log('[Login] Attempting login, email:', email, 'mode:', isRegisterMode ? 'register' : 'login');
+  console.log('[Login] Attempting local account setup, email:', email);
 
   if (!email || !password) {
     loginError.textContent = '请输入邮箱和密码';
@@ -128,19 +145,24 @@ async function handleLoginSubmit(e) {
   }
 
   try {
-    const cmd = isRegisterMode ? 'register' : 'login';
-    console.log('[Login] Invoking:', cmd);
-    const result = await invoke(cmd, { email, password });
-    console.log('[Login] Success, email:', result.email);
-    currentUserEmail = result.email;
+    // First setup local account
+    await invoke('setup_local_account', { email, password });
+    console.log('[Login] Local account setup complete');
+
+    // Now check if we got cloud connected during startup
+    appMode = await invoke('get_app_mode');
+    currentUserEmail = email;
     loginOverlay.classList.add('hidden');
     document.getElementById('app').style.display = 'flex';
-    userBar.classList.remove('hidden');
-    userEmailDisplay.textContent = result.email;
+    if (appMode.is_cloud_connected) {
+      userBar.classList.remove('hidden');
+      userEmailDisplay.textContent = email;
+    } else {
+      userBar.classList.add('hidden');
+    }
     document.getElementById('login-password').value = '';
-    console.log('[Login] Loading notes...');
+    updateSyncButtonText();
     await loadNotes();
-    console.log('[Login] Emitting auth-changed');
     await emit('auth-changed', true);
   } catch (err) {
     console.error('[Login] Failed:', err);
@@ -148,11 +170,15 @@ async function handleLoginSubmit(e) {
   }
 }
 
-function switchMode() {
-  isRegisterMode = !isRegisterMode;
-  loginForm.querySelector('button').textContent = isRegisterMode ? '注册' : '登录';
-  switchLink.textContent = isRegisterMode ? '已有账号？登录' : '还没有账号？立即注册';
-  loginError.textContent = '';
+function updateSyncButtonText() {
+  const icon = syncBtn.querySelector('.sync-icon');
+  if (appMode && appMode.cloud_enabled) {
+    syncBtn.title = '同步便签';
+    syncBtn.innerHTML = '<span class="sync-icon">&#x21bb;</span> 同步';
+  } else {
+    syncBtn.title = '刷新便签';
+    syncBtn.innerHTML = '<span class="sync-icon">&#x21bb;</span> 刷新';
+  }
 }
 
 async function handleLogout() {
@@ -174,11 +200,7 @@ async function loadNotes() {
     renderNotes(searchInput.value);
   } catch (e) {
     console.error('[Main] Failed to load notes:', e);
-    if (String(e).includes('未登录')) {
-      showLogin();
-    } else {
-      await showAlert('加载失败: ' + e);
-    }
+    await showAlert('加载失败: ' + e);
   }
 }
 
@@ -621,7 +643,6 @@ async function init() {
 
   // Setup login form
   loginForm.onsubmit = handleLoginSubmit;
-  switchLink.onclick = (e) => { e.preventDefault(); switchMode(); };
 
   // Setup logout
   logoutBtn.onclick = handleLogout;
@@ -691,6 +712,9 @@ async function init() {
     const currentUrl = await invoke('get_server_url');
     serverUrlInput.value = currentUrl;
     checkConnection();
+    // Sync cloud settings section visibility
+    const mode = await invoke('get_app_mode');
+    cloudSettingsSection.classList.toggle('hidden', !mode.cloud_enabled);
   }
 
   async function checkConnection() {
@@ -722,6 +746,36 @@ async function init() {
     }
   };
 
+  // Local mode toggle
+  const localModeToggle = document.getElementById('settings-local-mode-toggle');
+
+  const cloudSettingsSection = document.getElementById('cloud-settings-section');
+
+  async function loadLocalModeState() {
+    const mode = await invoke('get_app_mode');
+    // local_mode is the inverse of cloud_enabled
+    localModeToggle.checked = !mode.cloud_enabled;
+    cloudSettingsSection.classList.toggle('hidden', !mode.cloud_enabled);
+  }
+
+  localModeToggle.onchange = async () => {
+    try {
+      // When local mode is checked (true), cloud should be disabled (false)
+      await invoke('toggle_cloud', { enabled: !localModeToggle.checked });
+      cloudSettingsSection.classList.toggle('hidden', localModeToggle.checked);
+      updateSyncButtonText();
+      // If disabling local mode (enabling cloud), trigger sync
+      if (!localModeToggle.checked) {
+        await syncNotes();
+      }
+    } catch (e) {
+      await showAlert('切换失败: ' + e);
+      localModeToggle.checked = !localModeToggle.checked;
+    }
+  };
+
+  loadLocalModeState();
+
   await checkAuth();
 }
 
@@ -730,13 +784,16 @@ window.addEventListener('resize', () => {
 });
 
 newNoteBtn.onclick = createNewNote;
-syncBtn.onclick = async () => {
+
+async function syncNotes() {
   const icon = syncBtn.querySelector('.sync-icon');
   icon.classList.remove('spinning');
   void icon.offsetWidth;
   icon.classList.add('spinning');
   await loadNotes();
-};
+}
+
+syncBtn.onclick = syncNotes;
 saveBtn.onclick = saveNote;
 editBtn.onclick = toggleEdit;
 exitEditBtn.onclick = exitEdit;
