@@ -7,6 +7,7 @@ pub struct Config {
     pub server_url: Option<String>,
     pub token: Option<String>,
     pub user_id: Option<String>,
+    pub email: Option<String>,
 }
 
 impl Default for Config {
@@ -15,6 +16,7 @@ impl Default for Config {
             server_url: Some("http://localhost:8080".to_string()),
             token: None,
             user_id: None,
+            email: None,
         }
     }
 }
