@@ -72,10 +72,9 @@ pub async fn create_note(
     state: tauri::State<'_, AppState>,
     title: String,
     content: String,
-    color: String,
+    color: Option<String>,
 ) -> Result<Note, String> {
     let title = if title.trim().is_empty() { "未命名便签" } else { &title };
-    let color_opt = if color.is_empty() { None } else { Some(color) };
 
     let server_url = get_server_url(&state)?;
     let token = get_token(&state)?;
@@ -87,7 +86,7 @@ pub async fn create_note(
         .json(&CreateNoteRequest {
             title: title.to_string(),
             content: Some(content),
-            color: color_opt,
+            color,
         })
         .send()
         .await
@@ -115,7 +114,7 @@ pub async fn update_note(
     id: String,
     title: String,
     content: String,
-    color: String,
+    color: Option<String>,
 ) -> Result<Note, String> {
     let server_url = get_server_url(&state)?;
     let token = get_token(&state)?;
@@ -129,7 +128,7 @@ pub async fn update_note(
             content: Some(content),
             is_pinned: None,
             is_archived: None,
-            color: Some(color),
+            color,
         })
         .send()
         .await

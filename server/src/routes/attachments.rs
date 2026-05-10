@@ -3,8 +3,7 @@ use axum::{
     extract::{Multipart, Path, State},
     http::{header::AUTHORIZATION, HeaderMap},
 };
-use minio::s3::segmented_bytes::SegmentedBytes;
-use minio::s3::types::S3Api;
+use aws_sdk_s3::primitives::ByteStream;
 use uuid::Uuid;
 use zhiati_shared::{ApiResponse, Attachment, AttachmentUploadResponse};
 
@@ -90,17 +89,16 @@ pub async fn upload_attachment(
         .parse()
         .map_err(|_| AppError::BadRequest("Invalid note_id".to_string()))?;
 
-    // Upload to MinIO using the official minio-rs SDK
-    let sb = SegmentedBytes::from(String::from_utf8_lossy(&file_bytes).into_owned());
     state.s3_client
-        .put_object(&state.minio_bucket, &s3_key, sb)
-        .map_err(|e| AppError::BadRequest(e.to_string()))?
-        .build()
+        .put_object()
+        .bucket(&state.s3_bucket)
+        .key(&s3_key)
+        .body(ByteStream::from(file_bytes.clone()))
         .send()
         .await
-        .map_err(|e| AppError::InternalError(format!("上传到MinIO失败: {}", e)))?;
+        .map_err(|e| AppError::InternalError(format!("上传到RustFS失败: {}", e)))?;
 
-    let url = format!("{}/{}", state.minio_public_url.trim_end_matches('/'), s3_key);
+    let url = format!("{}/{}/{}", state.s3_public_url.trim_end_matches('/'), state.s3_bucket, s3_key);
     let file_size = file_bytes.len() as i64;
 
     let attachment: Attachment = sqlx::query_as(
@@ -145,9 +143,12 @@ pub async fn delete_attachment(
     let attachment = attachment
         .ok_or_else(|| AppError::NotFound("Attachment not found".to_string()))?;
 
-    if let Ok(builder) = state.s3_client.delete_object(&state.minio_bucket, attachment.s3_key.as_str()) {
-        let _ = builder.build().send().await;
-    }
+    let _ = state.s3_client
+        .delete_object()
+        .bucket(&state.s3_bucket)
+        .key(attachment.s3_key.as_str())
+        .send()
+        .await;
 
     sqlx::query("DELETE FROM attachments WHERE id = $1")
         .bind(id)

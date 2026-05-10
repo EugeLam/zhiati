@@ -7,18 +7,16 @@ use axum::Router;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::{CorsLayer, Any};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use minio::s3::MinioClient;
-use minio::s3::creds::StaticProvider;
-use minio::s3::http::BaseUrl;
-use minio::s3::types::S3Api;
+use aws_sdk_s3::Client as S3Client;
+use aws_credential_types::Credentials;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: sqlx::PgPool,
     pub jwt_secret: String,
-    pub s3_client: MinioClient,
-    pub minio_bucket: String,
-    pub minio_public_url: String,
+    pub s3_client: S3Client,
+    pub s3_bucket: String,
+    pub s3_public_url: String,
     pub max_upload_size: usize,
 }
 
@@ -38,21 +36,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let jwt_secret = env::var("JWT_SECRET")
         .expect("JWT_SECRET must be set");
 
-    let minio_endpoint = env::var("MINIO_ENDPOINT")
+    let s3_endpoint = env::var("RUSTFS_ENDPOINT_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:9000".into());
-    // Ensure trailing slash for proper V4 signing
-    let minio_endpoint = if minio_endpoint.ends_with('/') {
-        minio_endpoint
-    } else {
-        format!("{}/", minio_endpoint)
-    };
-    let minio_access_key = env::var("MINIO_ACCESS_KEY")
+    let s3_access_key = env::var("RUSTFS_ACCESS_KEY_ID")
         .unwrap_or_else(|_| "minioadmin".into());
-    let minio_secret_key = env::var("MINIO_SECRET_KEY")
+    let s3_secret_key = env::var("RUSTFS_SECRET_ACCESS_KEY")
         .unwrap_or_else(|_| "minioadmin".into());
-    let minio_bucket_name = env::var("MINIO_BUCKET")
+    let s3_region = env::var("RUSTFS_REGION")
+        .unwrap_or_else(|_| "us-east-1".into());
+    let s3_bucket_name = env::var("RUSTFS_BUCKET")
         .unwrap_or_else(|_| "zhiati-attachments".into());
-    let minio_public_url = env::var("MINIO_PUBLIC_URL")
+    let s3_public_url = env::var("RUSTFS_PUBLIC_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:9000".into());
     let max_upload_size: usize = env::var("MAX_UPLOAD_SIZE")
         .ok()
@@ -156,41 +150,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .execute(&pool)
     .await?;
 
-    // Setup MinIO client
-    let base_url = minio_endpoint.parse::<BaseUrl>()
-        .map_err(|e| format!("Invalid MinIO endpoint: {}", e))?;
+    // Setup S3 client for RustFS
+    let credentials = Credentials::new(&s3_access_key, &s3_secret_key, None, None, "rustfs");
+    let region = aws_config::Region::new(s3_region);
 
-    let provider = StaticProvider::new(&minio_access_key, &minio_secret_key, None);
+    let shared_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(region)
+        .credentials_provider(credentials)
+        .endpoint_url(&s3_endpoint)
+        .load()
+        .await;
 
-    let s3_client = MinioClient::new(base_url, Some(provider), None, Some(true))
-        .map_err(|e| format!("Failed to create MinIO client: {}", e))?;
+    let s3_client = S3Client::new(&shared_config);
 
     // Ensure bucket exists
-    tracing::info!("Checking MinIO bucket '{}'...", minio_bucket_name);
-    let resp = s3_client.bucket_exists(&minio_bucket_name)?
-        .build()
-        .send()
-        .await
-        .map_err(|e| format!("Failed to check bucket: {}", e))?;
+    tracing::info!("Checking S3 bucket '{}'...", s3_bucket_name);
+    let resp = s3_client.list_buckets().send().await;
 
-    if !resp.exists() {
-        tracing::info!("Creating MinIO bucket '{}'...", minio_bucket_name);
-        s3_client.create_bucket(&minio_bucket_name)?
-            .build()
-            .send()
-            .await
-            .map_err(|e| format!("Failed to create bucket: {}", e))?;
-        tracing::info!("MinIO bucket '{}' created", minio_bucket_name);
-    } else {
-        tracing::info!("MinIO bucket '{}' ready", minio_bucket_name);
+    match resp {
+        Ok(res) => {
+            let bucket_exists = res.buckets().iter().any(|b| b.name().as_deref() == Some(&s3_bucket_name));
+            if !bucket_exists {
+                tracing::info!("Creating S3 bucket '{}'...", s3_bucket_name);
+                s3_client.create_bucket()
+                    .bucket(&s3_bucket_name)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Failed to create bucket: {}", e))?;
+                tracing::info!("S3 bucket '{}' created", s3_bucket_name);
+            } else {
+                tracing::info!("S3 bucket '{}' ready", s3_bucket_name);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to check S3 bucket: {}. Server will continue — upload will fail until RustFS is configured.", e);
+        }
     }
 
     let state = AppState {
         db: pool,
         jwt_secret,
         s3_client,
-        minio_bucket: minio_bucket_name,
-        minio_public_url,
+        s3_bucket: s3_bucket_name,
+        s3_public_url,
         max_upload_size,
     };
 

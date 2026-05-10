@@ -2,7 +2,6 @@ use axum::{
     Json, extract::{State, Path},
     http::{header::AUTHORIZATION, HeaderMap},
 };
-use minio::s3::types::S3Api;
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -162,9 +161,12 @@ pub async fn delete(
     .await?;
 
     for (s3_key,) in keys {
-        if let Ok(builder) = state.s3_client.delete_object(&state.minio_bucket, s3_key.as_str()) {
-            let _ = builder.build().send().await;
-        }
+        let _ = state.s3_client
+            .delete_object()
+            .bucket(&state.s3_bucket)
+            .key(s3_key.as_str())
+            .send()
+            .await;
     }
 
     let result = sqlx::query(

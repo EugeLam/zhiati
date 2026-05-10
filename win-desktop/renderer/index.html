@@ -209,6 +209,21 @@
 <body>
   <!-- Main App -->
   <div id="app">
+    <div class="titlebar" data-tauri-drag-region>
+      <span class="titlebar-title">纸条</span>
+      <div class="titlebar-controls" data-tauri-drag-region="false">
+        <button id="titlebar-minimize" class="titlebar-btn" data-tauri-drag-region="false" title="最小化">
+          <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button id="titlebar-toggle-maximize" class="titlebar-btn" data-tauri-drag-region="false" title="最大化">
+          <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+        </button>
+        <button id="titlebar-close" class="titlebar-btn titlebar-btn-close" data-tauri-drag-region="false" title="关闭">
+          <svg width="10" height="10" viewBox="0 0 10 10"><line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.2"/><line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="app-body">
     <aside class="sidebar">
       <div class="sidebar-header">
         <h1><img src="/icon.png" class="app-icon" alt=""> 纸条</h1>
@@ -258,6 +273,7 @@
         <p>选择左侧便签开始编辑，或点击"新建"创建新便签</p>
       </div>
     </main>
+    </div>
   </div>
 
   <!-- Mini Mode (floating list) -->

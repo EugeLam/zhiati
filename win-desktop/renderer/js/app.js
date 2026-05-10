@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import EasyMDE from 'easymde';
 import { marked } from 'marked';
 
@@ -629,6 +630,16 @@ async function init() {
   notePreview.addEventListener('dblclick', () => {
     if (!isEditMode) toggleEdit();
   });
+
+  // Title bar controls
+  const appWindow = getCurrentWebviewWindow();
+  document.getElementById('titlebar-minimize').onclick = () => appWindow.minimize();
+  document.getElementById('titlebar-toggle-maximize').onclick = async () => {
+    const maximized = await appWindow.isMaximized();
+    if (maximized) await appWindow.unmaximize();
+    else await appWindow.maximize();
+  };
+  document.getElementById('titlebar-close').onclick = () => appWindow.close();
 
   await checkAuth();
 }
