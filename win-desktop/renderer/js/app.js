@@ -633,13 +633,94 @@ async function init() {
 
   // Title bar controls
   const appWindow = getCurrentWebviewWindow();
-  document.getElementById('titlebar-minimize').onclick = () => appWindow.minimize();
+  document.getElementById('titlebar-minimize').onclick = () => {
+    // Hide main window and show mini window
+    appWindow.hide();
+    invoke('show_mini_window');
+  };
   document.getElementById('titlebar-toggle-maximize').onclick = async () => {
     const maximized = await appWindow.isMaximized();
     if (maximized) await appWindow.unmaximize();
     else await appWindow.maximize();
   };
   document.getElementById('titlebar-close').onclick = () => appWindow.close();
+
+  // Settings panel
+  const titlebarTabs = document.getElementById('titlebar-tabs');
+  const tabSettings = document.getElementById('tab-settings');
+  const settingsPanel = document.getElementById('settings-panel');
+  const appBody = document.querySelector('.app-body');
+
+  // Add close button to settings tab
+  const closeBtn = document.createElement('span');
+  closeBtn.className = 'tab-close-btn';
+  closeBtn.innerHTML = '&times;';
+  closeBtn.onclick = (e) => { e.stopPropagation(); closeSettings(); };
+  tabSettings.appendChild(closeBtn);
+
+  // Open settings — show tab and panel
+  document.getElementById('titlebar-settings').onclick = () => {
+    titlebarTabs.classList.remove('hidden');
+    settingsPanel.classList.remove('hidden');
+    appBody.classList.add('hidden');
+    loadNetworkSettings();
+  };
+
+  function closeSettings() {
+    titlebarTabs.classList.add('hidden');
+    settingsPanel.classList.add('hidden');
+    appBody.classList.remove('hidden');
+  }
+
+  // Settings navigation
+  settingsPanel.querySelectorAll('.settings-nav-item').forEach(item => {
+    item.onclick = () => {
+      settingsPanel.querySelectorAll('.settings-nav-item').forEach(i => i.classList.remove('active'));
+      settingsPanel.querySelectorAll('.settings-page').forEach(p => p.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById(`settings-${item.dataset.settings}`).classList.add('active');
+    };
+  });
+
+  // Network settings
+  const serverUrlInput = document.getElementById('settings-server-url');
+  const serverSaveBtn = document.getElementById('settings-server-save');
+  const connectionStatus = document.getElementById('settings-connection-status');
+
+  async function loadNetworkSettings() {
+    const currentUrl = await invoke('get_server_url');
+    serverUrlInput.value = currentUrl;
+    checkConnection();
+  }
+
+  async function checkConnection() {
+    connectionStatus.innerHTML = '<span class="status-dot checking"></span><span class="status-text">检查中...</span>';
+    try {
+      const resp = await fetch(serverUrlInput.value + '/health', { method: 'GET' });
+      if (resp.ok) {
+        connectionStatus.innerHTML = '<span class="status-dot connected"></span><span class="status-text">连接正常</span>';
+      } else {
+        connectionStatus.innerHTML = '<span class="status-dot disconnected"></span><span class="status-text">连接失败 (HTTP ' + resp.status + ')</span>';
+      }
+    } catch (e) {
+      connectionStatus.innerHTML = '<span class="status-dot disconnected"></span><span class="status-text">无法连接: ' + e.message + '</span>';
+    }
+  }
+
+  serverSaveBtn.onclick = async () => {
+    const url = serverUrlInput.value.trim();
+    if (!url) {
+      await showAlert('请输入后端地址');
+      return;
+    }
+    try {
+      await invoke('set_server_url', { url });
+      await showAlert('保存成功，请重新登录');
+      checkConnection();
+    } catch (e) {
+      await showAlert('保存失败: ' + e);
+    }
+  };
 
   await checkAuth();
 }

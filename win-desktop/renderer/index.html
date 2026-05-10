@@ -211,9 +211,15 @@
   <div id="app">
     <div class="titlebar" data-tauri-drag-region>
       <span class="titlebar-title">纸条</span>
+      <div class="titlebar-tabs hidden" id="titlebar-tabs">
+        <span class="titlebar-tab active" id="tab-settings">设置</span>
+      </div>
       <div class="titlebar-controls" data-tauri-drag-region="false">
-        <button id="titlebar-minimize" class="titlebar-btn" data-tauri-drag-region="false" title="最小化">
-          <svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" stroke-width="1.2"/></svg>
+        <button id="titlebar-minimize" class="titlebar-btn" data-tauri-drag-region="false" title="切换到悬浮窗">
+          <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="4" width="8" height="5" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
+        </button>
+        <button id="titlebar-settings" class="titlebar-btn" data-tauri-drag-region="false" title="设置">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
         </button>
         <button id="titlebar-toggle-maximize" class="titlebar-btn" data-tauri-drag-region="false" title="最大化">
           <svg width="10" height="10" viewBox="0 0 10 10"><rect x="1" y="1" width="8" height="8" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
@@ -273,6 +279,60 @@
         <p>选择左侧便签开始编辑，或点击"新建"创建新便签</p>
       </div>
     </main>
+    </div>
+    <div id="settings-panel" class="settings-panel hidden">
+      <nav class="settings-nav">
+        <button class="settings-nav-item active" data-settings="network">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          <span>网络</span>
+        </button>
+        <button class="settings-nav-item" data-settings="about">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+          <span>关于</span>
+        </button>
+      </nav>
+      <div class="settings-content">
+        <div id="settings-network" class="settings-page active">
+          <h2>网络设置</h2>
+          <div class="settings-form-group">
+            <label for="settings-server-url">后端地址</label>
+            <div class="settings-input-row">
+              <input type="text" id="settings-server-url" placeholder="http://localhost:8080">
+              <button id="settings-server-save" class="btn-primary">保存</button>
+            </div>
+            <p class="settings-hint">修改后需要重新登录</p>
+          </div>
+          <div class="settings-form-group">
+            <label>连接状态</label>
+            <div id="settings-connection-status" class="connection-status">
+              <span class="status-dot checking"></span>
+              <span class="status-text">检查中...</span>
+            </div>
+          </div>
+        </div>
+        <div id="settings-about" class="settings-page">
+          <h2>关于</h2>
+          <div class="about-card">
+            <img src="/icon.png" class="about-icon" alt="">
+            <div class="about-info">
+              <h3>纸条</h3>
+              <p class="about-version">版本 0.1.0</p>
+              <p class="about-desc">一款简洁的便签应用，支持多端同步、提醒功能和图片附件。</p>
+            </div>
+          </div>
+          <div class="settings-form-group">
+            <label>技术栈</label>
+            <ul class="about-tech">
+              <li>前端：Vite + EasyMDE</li>
+              <li>桌面端：Tauri 2</li>
+              <li>后端：Rust + Axum</li>
+              <li>数据库：PostgreSQL</li>
+              <li>存储：RustFS (S3 兼容)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
     </div>
   </div>
 
