@@ -56,7 +56,6 @@ pub async fn create(
 ) -> Result<Json<ApiResponse<Note>>, AppError> {
     let user_id = extract_user_id_from_headers(&headers, &state.jwt_secret)?;
 
-    let note = Note::new(user_id, req.title.clone());
     let color = req.color.unwrap_or_else(|| "#FFFB00".to_string());
 
     let created: Note = sqlx::query_as(
@@ -68,7 +67,7 @@ pub async fn create(
     )
     .bind(user_id)
     .bind(&req.title)
-    .bind(&note.content)
+    .bind(&req.content)
     .bind(&color)
     .fetch_one(&state.db)
     .await?;
