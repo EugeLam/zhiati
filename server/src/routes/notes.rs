@@ -56,7 +56,6 @@ pub async fn create(
 ) -> Result<Json<ApiResponse<Note>>, AppError> {
     let user_id = extract_user_id_from_headers(&headers, &state.jwt_secret)?;
 
-    let note = Note::new(user_id, req.title.clone());
     let color = req.color.unwrap_or_else(|| "#FFFB00".to_string());
 
     let created: Note = sqlx::query_as(
@@ -68,7 +67,7 @@ pub async fn create(
     )
     .bind(user_id)
     .bind(&req.title)
-    .bind(&note.content)
+    .bind(&req.content)
     .bind(&color)
     .fetch_one(&state.db)
     .await?;
@@ -152,6 +151,22 @@ pub async fn delete(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ApiResponse<()>>, AppError> {
     let user_id = extract_user_id_from_headers(&headers, &state.jwt_secret)?;
+
+    let keys: Vec<(String,)> = sqlx::query_as(
+        "SELECT s3_key FROM attachments WHERE note_id = $1",
+    )
+    .bind(id)
+    .fetch_all(&state.db)
+    .await?;
+
+    for (s3_key,) in keys {
+        let _ = state.s3_client
+            .delete_object()
+            .bucket(&state.s3_bucket)
+            .key(s3_key.as_str())
+            .send()
+            .await;
+    }
 
     let result = sqlx::query(
         "DELETE FROM notes WHERE id = $1 AND user_id = $2",

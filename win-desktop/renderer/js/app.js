@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import EasyMDE from 'easymde';
 import { marked } from 'marked';
 
@@ -31,6 +33,7 @@ const switchLink = document.getElementById('switch-to-register');
 const userBar = document.getElementById('user-bar');
 const userEmailDisplay = document.getElementById('user-email-display');
 const logoutBtn = document.getElementById('logout-btn');
+const syncBtn = document.getElementById('sync-btn');
 const reminderBtn = document.getElementById('reminder-btn');
 const reminderPanel = document.getElementById('reminder-panel');
 const reminderList = document.getElementById('reminder-list');
@@ -117,6 +120,7 @@ async function handleLoginSubmit(e) {
   const email = document.getElementById('login-email').value.trim();
   const password = document.getElementById('login-password').value;
   loginError.textContent = '';
+  console.log('[Login] Attempting login, email:', email, 'mode:', isRegisterMode ? 'register' : 'login');
 
   if (!email || !password) {
     loginError.textContent = '请输入邮箱和密码';
@@ -125,16 +129,21 @@ async function handleLoginSubmit(e) {
 
   try {
     const cmd = isRegisterMode ? 'register' : 'login';
+    console.log('[Login] Invoking:', cmd);
     const result = await invoke(cmd, { email, password });
+    console.log('[Login] Success, email:', result.email);
     currentUserEmail = result.email;
     loginOverlay.classList.add('hidden');
     document.getElementById('app').style.display = 'flex';
     userBar.classList.remove('hidden');
     userEmailDisplay.textContent = result.email;
     document.getElementById('login-password').value = '';
+    console.log('[Login] Loading notes...');
     await loadNotes();
+    console.log('[Login] Emitting auth-changed');
     await emit('auth-changed', true);
   } catch (err) {
+    console.error('[Login] Failed:', err);
     loginError.textContent = typeof err === 'string' ? err : '操作失败，请检查网络连接';
   }
 }
@@ -230,7 +239,14 @@ function initEasyMDE() {
     element: noteContent,
     spellChecker: false,
     placeholder: '写点什么...',
-    toolbar: ['bold', 'italic', 'heading', '|', 'quote', 'unordered-list', 'ordered-list', '|', 'link', 'image', 'code', 'table', '|',
+    toolbar: ['bold', 'italic', 'heading', '|', 'quote', 'unordered-list', 'ordered-list', '|', 'link',
+      {
+        name: 'upload-image',
+        action: handleImageUpload,
+        className: 'fa fa-picture-o',
+        title: '上传图片',
+      },
+      'code', 'table', '|',
       {
         name: 'preview-toggle',
         action: togglePreviewPanel,
@@ -269,6 +285,34 @@ function destroyEasyMDE() {
   if (easyMDE) {
     easyMDE.toTextArea();
     easyMDE = null;
+  }
+}
+
+async function handleImageUpload(editor) {
+  if (!currentNote || !currentNote.id) {
+    await showAlert('请先保存便签再上传图片');
+    return;
+  }
+
+  const filePath = await open({
+    multiple: false,
+    filters: [{
+      name: 'Images',
+      extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+    }],
+  });
+
+  if (!filePath) return;
+
+  try {
+    const result = await invoke('upload_image', { filePath, noteId: currentNote.id });
+    const markdown = `![${result.filename}](${result.url})`;
+    if (easyMDE) {
+      easyMDE.codemirror.replaceSelection(markdown + '\n');
+    }
+  } catch (err) {
+    console.error('[Main] Image upload failed:', err);
+    await showAlert('图片上传失败: ' + (typeof err === 'string' ? err : '未知错误'));
   }
 }
 
@@ -587,6 +631,97 @@ async function init() {
     if (!isEditMode) toggleEdit();
   });
 
+  // Title bar controls
+  const appWindow = getCurrentWebviewWindow();
+  document.getElementById('titlebar-minimize').onclick = () => {
+    // Hide main window and show mini window
+    appWindow.hide();
+    invoke('show_mini_window');
+  };
+  document.getElementById('titlebar-toggle-maximize').onclick = async () => {
+    const maximized = await appWindow.isMaximized();
+    if (maximized) await appWindow.unmaximize();
+    else await appWindow.maximize();
+  };
+  document.getElementById('titlebar-close').onclick = () => appWindow.close();
+
+  // Settings panel
+  const titlebarTabs = document.getElementById('titlebar-tabs');
+  const tabSettings = document.getElementById('tab-settings');
+  const settingsPanel = document.getElementById('settings-panel');
+  const appBody = document.querySelector('.app-body');
+
+  // Add close button to settings tab
+  const closeBtn = document.createElement('span');
+  closeBtn.className = 'tab-close-btn';
+  closeBtn.innerHTML = '&times;';
+  closeBtn.onclick = (e) => { e.stopPropagation(); closeSettings(); };
+  tabSettings.appendChild(closeBtn);
+
+  // Open settings — show tab and panel
+  document.getElementById('titlebar-settings').onclick = () => {
+    titlebarTabs.classList.remove('hidden');
+    settingsPanel.classList.remove('hidden');
+    appBody.classList.add('hidden');
+    loadNetworkSettings();
+  };
+
+  function closeSettings() {
+    titlebarTabs.classList.add('hidden');
+    settingsPanel.classList.add('hidden');
+    appBody.classList.remove('hidden');
+  }
+
+  // Settings navigation
+  settingsPanel.querySelectorAll('.settings-nav-item').forEach(item => {
+    item.onclick = () => {
+      settingsPanel.querySelectorAll('.settings-nav-item').forEach(i => i.classList.remove('active'));
+      settingsPanel.querySelectorAll('.settings-page').forEach(p => p.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById(`settings-${item.dataset.settings}`).classList.add('active');
+    };
+  });
+
+  // Network settings
+  const serverUrlInput = document.getElementById('settings-server-url');
+  const serverSaveBtn = document.getElementById('settings-server-save');
+  const connectionStatus = document.getElementById('settings-connection-status');
+
+  async function loadNetworkSettings() {
+    const currentUrl = await invoke('get_server_url');
+    serverUrlInput.value = currentUrl;
+    checkConnection();
+  }
+
+  async function checkConnection() {
+    connectionStatus.innerHTML = '<span class="status-dot checking"></span><span class="status-text">检查中...</span>';
+    try {
+      const resp = await fetch(serverUrlInput.value + '/health', { method: 'GET' });
+      if (resp.ok) {
+        connectionStatus.innerHTML = '<span class="status-dot connected"></span><span class="status-text">连接正常</span>';
+      } else {
+        connectionStatus.innerHTML = '<span class="status-dot disconnected"></span><span class="status-text">连接失败 (HTTP ' + resp.status + ')</span>';
+      }
+    } catch (e) {
+      connectionStatus.innerHTML = '<span class="status-dot disconnected"></span><span class="status-text">无法连接: ' + e.message + '</span>';
+    }
+  }
+
+  serverSaveBtn.onclick = async () => {
+    const url = serverUrlInput.value.trim();
+    if (!url) {
+      await showAlert('请输入后端地址');
+      return;
+    }
+    try {
+      await invoke('set_server_url', { url });
+      await showAlert('保存成功，请重新登录');
+      checkConnection();
+    } catch (e) {
+      await showAlert('保存失败: ' + e);
+    }
+  };
+
   await checkAuth();
 }
 
@@ -595,6 +730,13 @@ window.addEventListener('resize', () => {
 });
 
 newNoteBtn.onclick = createNewNote;
+syncBtn.onclick = async () => {
+  const icon = syncBtn.querySelector('.sync-icon');
+  icon.classList.remove('spinning');
+  void icon.offsetWidth;
+  icon.classList.add('spinning');
+  await loadNotes();
+};
 saveBtn.onclick = saveNote;
 editBtn.onclick = toggleEdit;
 exitEditBtn.onclick = exitEdit;

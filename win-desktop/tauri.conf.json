@@ -4,9 +4,9 @@
   "identifier": "com.zhiati.desktop",
   "version": "0.1.0",
   "build": {
-    "beforeDevCommand": "cd renderer && npm run dev",
+    "beforeDevCommand": "",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "cd renderer && npm run build",
+    "beforeBuildCommand": "",
     "frontendDist": "./renderer/dist"
   },
   "app": {
@@ -20,7 +20,7 @@
         "minHeight": 400,
         "resizable": true,
         "fullscreen": false,
-        "decorations": true,
+        "decorations": false,
         "transparent": false,
         "center": true,
         "url": "http://localhost:5173"

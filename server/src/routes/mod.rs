@@ -1,8 +1,9 @@
 pub mod auth;
 pub mod notes;
 pub mod reminders;
+pub mod attachments;
 
-use axum::Router;
+use axum::{Router, extract::DefaultBodyLimit};
 use crate::AppState;
 
 pub fn auth_routes() -> Router<AppState> {
@@ -28,4 +29,11 @@ pub fn reminders_routes() -> Router<AppState> {
         .route("/:id", axum::routing::put(reminders::update))
         .route("/:id", axum::routing::delete(reminders::delete))
         .route("/:id/trigger", axum::routing::post(reminders::mark_triggered))
+}
+
+pub fn attachments_routes() -> Router<AppState> {
+    Router::new()
+        .route("/upload", axum::routing::post(attachments::upload_attachment)
+            .layer(DefaultBodyLimit::max(20 * 1024 * 1024)))
+        .route("/:id", axum::routing::delete(attachments::delete_attachment))
 }

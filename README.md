@@ -72,20 +72,29 @@ cargo install --path .
 zt register --email test@example.com --password 123456
 zt login --email test@example.com --password 123456
 
-# 创建便签
+# 查看当前登录用户
+zt whoami
+
+# 创建便签（内容可直接跟在标题后面，也可用 --content）
+zt new "购物清单" "一牛奶\n一面包"
 zt new "购物清单" --content "- 牛奶\n- 面包"
 
-# 查看列表
+# 列出便签（显示编号，便于后续操作）
 zt list
 
-# 编辑
-zt edit <id> --title "新标题" --content "新内容"
+# 查看 / 编辑 / 删除（支持用编号代替 UUID）
+zt show 1              # 查看第一条便签
+zt show <uuid>         # 通过 UUID 查看
+zt edit 1 --title "新标题"
+zt edit 1 --content "新内容"
+zt delete 1            # 删除第一条便签
 
-# 搜索
+# 搜索便签
 zt search "关键词"
 
 # 导出 / 导入
 zt export --format json --output notes.json
+zt export --format md --output notes.md
 zt import --file notes.json
 
 # 指定服务器地址

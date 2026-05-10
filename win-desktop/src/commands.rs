@@ -28,6 +28,14 @@ fn auth_header(token: &str) -> String {
     format!("Bearer {}", token)
 }
 
+fn build_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .proxy(reqwest::Proxy::custom(|_| None::<String>))
+        .no_proxy()
+        .build()
+        .expect("Failed to build reqwest client")
+}
+
 #[tauri::command]
 pub async fn get_notes(
     state: tauri::State<'_, AppState>,
@@ -37,7 +45,7 @@ pub async fn get_notes(
     let server_url = get_server_url(&state)?;
     let token = get_token(&state)?;
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .get(format!("{}/api/notes", server_url))
         .header("Authorization", auth_header(&token))
@@ -64,22 +72,21 @@ pub async fn create_note(
     state: tauri::State<'_, AppState>,
     title: String,
     content: String,
-    color: String,
+    color: Option<String>,
 ) -> Result<Note, String> {
     let title = if title.trim().is_empty() { "未命名便签" } else { &title };
-    let color_opt = if color.is_empty() { None } else { Some(color) };
 
     let server_url = get_server_url(&state)?;
     let token = get_token(&state)?;
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .post(format!("{}/api/notes", server_url))
         .header("Authorization", auth_header(&token))
         .json(&CreateNoteRequest {
             title: title.to_string(),
             content: Some(content),
-            color: color_opt,
+            color,
         })
         .send()
         .await
@@ -107,12 +114,12 @@ pub async fn update_note(
     id: String,
     title: String,
     content: String,
-    color: String,
+    color: Option<String>,
 ) -> Result<Note, String> {
     let server_url = get_server_url(&state)?;
     let token = get_token(&state)?;
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .put(format!("{}/api/notes/{}", server_url, id))
         .header("Authorization", auth_header(&token))
@@ -121,7 +128,7 @@ pub async fn update_note(
             content: Some(content),
             is_pinned: None,
             is_archived: None,
-            color: Some(color),
+            color,
         })
         .send()
         .await
@@ -147,7 +154,7 @@ pub async fn delete_note(
     let server_url = get_server_url(&state)?;
     let token = get_token(&state)?;
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .delete(format!("{}/api/notes/{}", server_url, id))
         .header("Authorization", auth_header(&token))
@@ -179,7 +186,7 @@ pub async fn get_reminders(
     let server_url = get_server_url(&state)?;
     let token = get_token(&state)?;
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .get(format!("{}/api/reminders?note_id={}", server_url, note_id))
         .header("Authorization", auth_header(&token))
@@ -220,7 +227,7 @@ pub async fn add_reminder(
     let note_uuid = uuid::Uuid::parse_str(&note_id)
         .map_err(|e| format!("无效的便签ID: {}", e))?;
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .post(format!("{}/api/reminders", server_url))
         .header("Authorization", auth_header(&token))
@@ -271,7 +278,7 @@ pub async fn delete_reminder(
     let server_url = get_server_url(&state)?;
     let token = get_token(&state)?;
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .delete(format!("{}/api/reminders/{}", server_url, id))
         .header("Authorization", auth_header(&token))
@@ -387,4 +394,111 @@ pub async fn set_window_level(app: tauri::AppHandle, window_label: String, level
         return Ok(());
     }
     Err("Window not found".to_string())
+}
+
+#[derive(serde::Serialize)]
+pub struct ImageUploadResult {
+    pub filename: String,
+    pub url: String,
+}
+
+#[tauri::command]
+pub async fn upload_image(
+    state: tauri::State<'_, AppState>,
+    file_path: String,
+    note_id: String,
+) -> Result<ImageUploadResult, String> {
+    tracing::info!("[Rust] upload_image called: {}", file_path);
+
+    let server_url = get_server_url(&state)?;
+    let token = get_token(&state)?;
+    tracing::info!("[Rust] upload target: {}/api/attachments/upload", server_url);
+
+    let file_bytes = tokio::fs::read(&file_path)
+        .await
+        .map_err(|e| {
+            tracing::error!("[Rust] Failed to read file: {}", e);
+            format!("读取文件失败: {}", e)
+        })?;
+    tracing::info!("[Rust] File size: {} bytes", file_bytes.len());
+
+    let file_name = std::path::Path::new(&file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("image.png")
+        .to_string();
+
+    // Detect MIME type from extension (case-insensitive)
+    let ext = std::path::Path::new(&file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    let mime_type = match ext.as_deref() {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        _ => "image/png",
+    };
+
+    let part = reqwest::multipart::Part::bytes(file_bytes.clone())
+        .file_name(file_name.clone())
+        .mime_str(mime_type)
+        .map_err(|e| format!("设置文件类型失败: {}", e))?;
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("note_id", note_id);
+
+    let client = build_client();
+    let url = format!("{}/api/attachments/upload", server_url);
+    tracing::info!("[Rust] Building request to: {}", url);
+    tracing::info!("[Rust] File size: {}, MIME: {}", file_bytes.len(), mime_type);
+
+    // Quick connectivity test
+    match client.get(&format!("{}/health", server_url)).send().await {
+        Ok(r) => tracing::info!("[Rust] Health check: {}", r.status()),
+        Err(e) => tracing::error!("[Rust] Health check failed: {:?}", e),
+    }
+
+    // Wrap in std::panic::catch_unwind to capture any panics
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client
+            .post(&url)
+            .header("Authorization", auth_header(&token))
+            .multipart(form)
+            .send()
+    }));
+
+    let resp = match result {
+        Ok(fut) => match fut.await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("[Rust] Upload request error: {:?}", e);
+                return Err(format!("上传请求失败: {:?}", e));
+            }
+        },
+        Err(_panic) => {
+            tracing::error!("[Rust] Upload request panicked!");
+            return Err("上传图片时发生内部错误".to_string());
+        }
+    };
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("上传失败: {}", body));
+    }
+
+    let body: shared::ApiResponse<shared::AttachmentUploadResponse> = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析响应失败: {}", e))?;
+
+    let data = body.data.ok_or_else(|| "上传失败: 无效响应".to_string())?;
+
+    Ok(ImageUploadResult {
+        filename: data.filename,
+        url: data.url,
+    })
 }

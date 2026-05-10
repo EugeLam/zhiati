@@ -4,6 +4,14 @@ use serde::Serialize;
 use shared::{ApiResponse, AuthResponse, LoginRequest, RegisterRequest};
 use tauri::{AppHandle, Emitter, State};
 
+fn build_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .proxy(reqwest::Proxy::custom(|_| None::<String>))
+        .no_proxy()
+        .build()
+        .expect("Failed to build reqwest client")
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthResult {
     pub token: String,
@@ -18,28 +26,39 @@ pub async fn login(
     email: String,
     password: String,
 ) -> Result<AuthResult, String> {
+    tracing::info!("[Rust] login called for email: {}", email);
     let server_url = state.server_url.lock().map_err(|e| e.to_string())?.clone();
+    tracing::info!("[Rust] Server URL: {}", server_url);
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .post(format!("{}/api/auth/login", server_url))
         .json(&LoginRequest { email, password })
         .send()
         .await
-        .map_err(|e| format!("无法连接到服务器: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("[Rust] Login request failed: {}", e);
+            format!("无法连接到服务器: {}", e)
+        })?;
+
+    tracing::info!("[Rust] Login response status: {}", resp.status());
 
     if !resp.status().is_success() {
         let body: ApiResponse<AuthResponse> = resp
             .json()
             .await
             .unwrap_or_else(|_| ApiResponse::error("Unknown error".into()));
+        tracing::error!("[Rust] Login failed: {:?}", body.error);
         return Err(body.error.unwrap_or_else(|| "登录失败".into()));
     }
 
     let body: ApiResponse<AuthResponse> = resp
         .json()
         .await
-        .map_err(|e| format!("解析响应失败: {}", e))?;
+        .map_err(|e| {
+            tracing::error!("[Rust] Failed to parse login response: {}", e);
+            format!("解析响应失败: {}", e)
+        })?;
 
     let auth = body.data.ok_or_else(|| "登录失败: 无效响应".to_string())?;
 
@@ -79,7 +98,7 @@ pub async fn register(
 ) -> Result<AuthResult, String> {
     let server_url = state.server_url.lock().map_err(|e| e.to_string())?.clone();
 
-    let client = reqwest::Client::new();
+    let client = build_client();
     let resp = client
         .post(format!("{}/api/auth/register", server_url))
         .json(&RegisterRequest {
