@@ -126,17 +126,16 @@ fn main() {
                 tracing::error!("[Rust] Failed to setup tray: {}", e);
             }
 
-            // Transparent cloud auth if local credentials exist and cloud is enabled
+            // Transparent cloud auth only when cloud account is explicitly bound and cloud is enabled
             let app_h = app.handle().clone();
-            let local_email = cfg.local_email.clone();
+            let bound_cloud_email = cfg.bound_cloud_email.clone();
             let local_password_encrypted = cfg.local_password_encrypted.clone();
             let cloud_enabled = cfg.cloud_enabled;
 
-            if cloud_enabled && local_email.is_some() && local_password_encrypted.is_some() {
-                let email = local_email.unwrap();
+            if cloud_enabled && bound_cloud_email.is_some() && local_password_encrypted.is_some() {
+                let email = bound_cloud_email.unwrap();
                 let encrypted_pw = local_password_encrypted.unwrap();
                 tauri::async_runtime::spawn(async move {
-                    // Try to decrypt and authenticate
                     match crypto::decrypt_password(&encrypted_pw) {
                         Ok(password) => {
                             let state = app_h.state::<AppState>();
@@ -148,9 +147,7 @@ fn main() {
                             ).await {
                                 Ok(result) => {
                                     tracing::info!("[Rust] Transparent cloud login succeeded for {}", result.email);
-                                    // Sync notes after login
                                     let _ = commands::sync_notes(state.clone()).await;
-                                    // Initialize scheduler
                                     let state = app_h.state::<AppState>();
                                     let url = state.server_url.lock().unwrap().clone();
                                     let token = state.token.lock().unwrap().clone().unwrap_or_default();
@@ -167,14 +164,13 @@ fn main() {
                     }
                 });
             } else if cloud_enabled && cfg.token.is_some() {
-                // Existing cloud session without local credentials
+                // Existing cloud session (valid token) without needing re-auth
                 let app_h2 = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     let state = app_h2.state::<AppState>();
                     let url = state.server_url.lock().unwrap().clone();
                     let token = state.token.lock().unwrap().clone().unwrap_or_default();
                     state.scheduler.init(app_h2.clone(), &url, &token).await;
-                    // Also sync notes
                     let _ = commands::sync_notes(state.clone()).await;
                 });
             }
@@ -204,6 +200,8 @@ fn main() {
             auth::login,
             auth::register,
             auth::logout,
+            auth::bind_cloud_account,
+            auth::register_and_bind,
             auth::get_server_url,
             auth::set_server_url,
             auth::get_current_user_id,

@@ -13,6 +13,8 @@ pub struct Config {
     pub local_email: Option<String>,
     #[serde(default)]
     pub local_password_encrypted: Option<String>,
+    #[serde(default)]
+    pub bound_cloud_email: Option<String>,
     #[serde(default = "default_true")]
     pub cloud_enabled: bool,
 }
@@ -34,6 +36,7 @@ impl Default for Config {
             user_email: None,
             local_email: None,
             local_password_encrypted: None,
+            bound_cloud_email: None,
             cloud_enabled: true,
         }
     }

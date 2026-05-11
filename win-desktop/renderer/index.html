@@ -373,7 +373,7 @@
         <input type="password" id="login-password" placeholder="密码" autocomplete="current-password">
         <button type="submit" class="btn-login-submit">登录</button>
       </form>
-      <p class="login-switch">还没有账号？<a href="#" id="switch-to-register">立即注册</a></p>
+      <p class="login-switch">还没有账号？<a href="#" id="switch-to-register">立即注册</a><span id="login-hint-text" class="login-hint" style="display:none">账号信息仅保存在本地，安全加密存储</span></p>
       <p id="login-error" class="login-error"></p>
     </div>
   </div>
@@ -385,6 +385,19 @@
       <div class="dialog-actions">
         <button id="dialog-cancel-btn" class="btn-preview dialog-cancel">取消</button>
         <button id="dialog-confirm-btn" class="btn-primary dialog-confirm">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cloud Account Bind Dialog -->
+  <div id="bind-dialog-overlay" class="dialog-overlay hidden">
+    <div class="dialog-card bind-dialog-card">
+      <p class="dialog-message">切换到云端模式需要绑定云端账户</p>
+      <p class="dialog-hint">绑定后，本地数据会同步到云端</p>
+      <div class="dialog-actions bind-actions">
+        <button id="bind-dialog-cancel-btn" class="btn-preview">取消</button>
+        <button id="bind-dialog-bind-btn" class="btn-primary">绑定已有账户</button>
+        <button id="bind-dialog-register-btn" class="btn-secondary">注册新账户</button>
       </div>
     </div>
   </div>

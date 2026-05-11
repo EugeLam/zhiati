@@ -428,6 +428,12 @@ body {
   color: #fff;
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .btn-preview {
   background: transparent;
   color: var(--text-secondary);
@@ -1142,4 +1148,46 @@ body {
   font-size: 12px;
   color: var(--text-muted);
   margin-top: 12px;
+}
+
+/* Cloud Account Bind Dialog */
+.bind-dialog-card {
+  max-width: 440px;
+}
+
+.dialog-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: -8px;
+  margin-bottom: 20px;
+}
+
+.bind-actions {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bind-actions .btn-preview,
+.bind-actions .btn-primary,
+.bind-actions .btn-secondary {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.btn-secondary {
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--accent);
+  color: #2D2A26;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--duration);
+}
+
+.btn-secondary:hover {
+  background: var(--accent-hover);
 }

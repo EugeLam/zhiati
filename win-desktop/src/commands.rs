@@ -537,6 +537,7 @@ pub struct AppMode {
     pub cloud_enabled: bool,
     pub is_cloud_connected: bool,
     pub local_account_exists: bool,
+    pub cloud_account_bound: bool,
 }
 
 #[tauri::command]
@@ -545,10 +546,12 @@ pub async fn get_app_mode(state: tauri::State<'_, AppState>) -> Result<AppMode, 
     let cloud_connected = state.token.lock().map_err(|e| e.to_string())?.is_some();
     let cfg = crate::config::load_config();
     let local_account_exists = cfg.local_email.is_some() && cfg.local_password_encrypted.is_some();
+    let cloud_account_bound = cfg.bound_cloud_email.is_some();
     Ok(AppMode {
         cloud_enabled: cloud_on,
         is_cloud_connected: cloud_connected,
         local_account_exists,
+        cloud_account_bound,
     })
 }
 
