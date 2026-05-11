@@ -14,8 +14,6 @@ window.addEventListener('unhandledrejection', (e) => {
   console.error('[Unhandled Rejection]', e.reason);
 });
 
-console.log('[Main] Module loaded, resolving DOM elements...');
-
 // --- Image path resolution ---
 
 /** Convert markdown content: resolve 'attachments/...' relative paths to asset:// URLs.
@@ -51,20 +49,13 @@ function isAttachmentPath(src) {
 
 async function fixPreviewImages() {
   const images = notePreview.querySelectorAll('img');
-  console.log('[Image] fixPreviewImages: found', images.length, 'images');
   for (const img of images) {
     const src = img.getAttribute('src');
-    const resolvedSrc = img.src;
-    console.log('[Image] getAttribute src:', src);
-    console.log('[Image] img.src (resolved):', resolvedSrc);
     if (src && isAttachmentPath(src)) {
       try {
-        // Use Tauri command to read file as base64 data URL — bypasses asset protocol scope
         const dataUrl = await invoke('read_attachment_as_data_url', { path: src });
-        console.log('[Image] loaded as data URL, length:', dataUrl.length);
         img.src = dataUrl;
       } catch (e) {
-        console.warn('[Image] resolve failed for', src, ':', e);
         // Not found — handleImageError will attempt cloud download
       }
     }
@@ -119,18 +110,6 @@ const bindDialogOverlay = document.getElementById('bind-dialog-overlay');
 const bindDialogCancelBtn = document.getElementById('bind-dialog-cancel-btn');
 const bindDialogBindBtn = document.getElementById('bind-dialog-bind-btn');
 const bindDialogRegisterBtn = document.getElementById('bind-dialog-register-btn');
-
-// Verify critical DOM elements
-const _missingElements = [
-  ['notesList', notesList], ['loginOverlay', loginOverlay], ['app', document.getElementById('app')],
-  ['loginForm', loginForm], ['userBar', userBar], ['newNoteBtn', newNoteBtn],
-  ['bindDialogOverlay', bindDialogOverlay], ['dialogOverlay', document.getElementById('app-dialog-overlay')],
-].filter(([name, el]) => !el).map(([name]) => name);
-if (_missingElements.length > 0) {
-  console.error('[Main] Missing DOM elements:', _missingElements);
-} else {
-  console.log('[Main] All critical DOM elements found');
-}
 
 // Settings panel elements (needed by handleLoginSubmit after binding)
 let localModeToggle = null;
@@ -249,13 +228,11 @@ let appMode = null; // { cloud_enabled, is_cloud_connected, local_account_exists
 async function checkAuth() {
   try {
     appMode = await invoke('get_app_mode');
-    console.log('[Auth] App mode:', appMode);
 
     if (appMode.local_account_exists) {
       // Local account exists, enter app directly
       const email = await invoke('get_current_user_email');
       currentUserEmail = email;
-      console.log('[Auth] Local account found, email:', email);
       loginOverlay.classList.add('hidden');
       document.getElementById('app').style.display = 'flex';
       if (appMode.is_cloud_connected) {
@@ -266,10 +243,8 @@ async function checkAuth() {
       }
       updateSyncButtonText();
       await loadNotes();
-      console.log('[Auth] App ready, notes loaded');
       return true;
     }
-    console.log('[Auth] No local account, showing login');
   } catch (e) {
     console.log('[Auth] Not authenticated:', e);
   }
@@ -474,7 +449,6 @@ async function loadNotes() {
   try {
     const result = await invoke('get_notes');
     notes = result || [];
-    console.log('[Main] Loaded notes:', notes.length);
     renderNotes(searchInput.value);
   } catch (e) {
     console.error('[Main] Failed to load notes:', e);
@@ -606,10 +580,8 @@ async function handleImageUpload(editor) {
 
   try {
     const result = await invoke('upload_image', { filePath, noteId: currentNote.id });
-    console.log('[Image] Upload result:', result);
-    // Always use local relative path in markdown — renderPreview resolves to asset://
+    // Always use local relative path in markdown — renderPreview resolves to data URL
     const mdPath = result.local_path || result.url;
-    console.log('[Image] Using md path:', mdPath);
     const markdown = `![${result.filename}](${mdPath})`;
     if (easyMDE) {
       easyMDE.codemirror.replaceSelection(markdown + '\n');
@@ -913,11 +885,6 @@ function showNotification(message) {
 }
 
 async function init() {
-  console.log('[Main] Initializing...');
-  console.log('[Main] DOM readyState:', document.readyState);
-  console.log('[Main] #app element:', document.getElementById('app'));
-  console.log('[Main] #login-overlay element:', document.getElementById('login-overlay'));
-  console.log('[Main] #notes-list element:', document.getElementById('notes-list'));
   try {
 
   await listen('notes-updated', (event) => {
@@ -1016,6 +983,10 @@ async function init() {
       settingsPanel.querySelectorAll('.settings-page').forEach(p => p.classList.remove('active'));
       item.classList.add('active');
       document.getElementById(`settings-${item.dataset.settings}`).classList.add('active');
+      // Load storage settings when storage tab is selected
+      if (item.dataset.settings === 'storage') {
+        loadStorageSettings();
+      }
     };
   });
 
@@ -1062,20 +1033,68 @@ async function init() {
     }
   };
 
+  // Storage settings
+  const attachmentsRootInput = document.getElementById('settings-attachments-root');
+  const attachmentsChangeBtn = document.getElementById('settings-attachments-change');
+  const storageInfoEl = document.getElementById('settings-storage-info');
+
+  async function loadStorageSettings() {
+    const root = await invoke('get_attachments_root');
+    attachmentsRootInput.value = root;
+    loadStorageInfo(root);
+  }
+
+  async function loadStorageInfo(root) {
+    try {
+      const info = await invoke('get_attachments_storage_info', { root });
+      const sizeStr = formatBytes(info.total_size);
+      storageInfoEl.textContent = `附件数量: ${info.file_count} | 占用空间: ${sizeStr}`;
+    } catch (e) {
+      storageInfoEl.textContent = `无法获取存储信息: ${e}`;
+    }
+  }
+
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+  }
+
+  attachmentsChangeBtn.onclick = async () => {
+    const newRoot = await open({
+      directory: true,
+      multiple: false,
+      title: '选择新的附件保存位置',
+    });
+    if (!newRoot) return;
+
+    try {
+      const confirmed = await showConfirm(`确定要将附件保存位置更改为:\n${newRoot}\n\n已有附件将自动迁移到新位置。`);
+      if (!confirmed) return;
+
+      attachmentsChangeBtn.disabled = true;
+      attachmentsChangeBtn.textContent = '迁移中...';
+      await invoke('set_attachments_root', { newRoot });
+      await showAlert('更改成功，附件已迁移到新位置');
+      await loadStorageSettings();
+    } catch (e) {
+      await showAlert('更改失败: ' + e);
+    } finally {
+      attachmentsChangeBtn.disabled = false;
+      attachmentsChangeBtn.textContent = '更改';
+    }
+  };
+
   // Local mode toggle
   localModeToggle = document.getElementById('settings-local-mode-toggle');
   cloudSettingsSection = document.getElementById('cloud-settings-section');
-  console.log('[Main] localModeToggle element:', localModeToggle);
-  console.log('[Main] cloudSettingsSection element:', cloudSettingsSection);
 
   async function loadLocalModeState() {
-    console.log('[Main] loadLocalModeState: calling get_app_mode...');
     const mode = await invoke('get_app_mode');
-    console.log('[Main] loadLocalModeState: got mode:', mode);
     // local_mode is the inverse of cloud_enabled
     localModeToggle.checked = !mode.cloud_enabled;
     cloudSettingsSection.classList.toggle('hidden', !mode.cloud_enabled);
-    console.log('[Main] loadLocalModeState: done');
   }
 
   localModeToggle.onchange = async () => {
@@ -1106,12 +1125,9 @@ async function init() {
     }
   };
 
-  console.log('[Main] Calling loadLocalModeState...');
   loadLocalModeState();
 
-  console.log('[Main] Calling checkAuth...');
   await checkAuth();
-  console.log('[Main] checkAuth returned, init complete');
   } catch (e) {
     console.error('[Main] Init error:', e);
   }
@@ -1134,7 +1150,6 @@ async function syncNotes() {
   try {
     const result = await invoke('sync_notes');
     notes = result || [];
-    console.log('[Main] Synced notes:', notes.length);
     renderNotes(searchInput.value);
   } finally {
     isActionLoading = false;

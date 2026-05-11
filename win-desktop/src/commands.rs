@@ -591,7 +591,6 @@ pub async fn download_attachment(
 pub async fn resolve_attachment_path(path: String) -> Result<String, String> {
     let root = crate::config::attachments_root();
     let full_path = root.join(&path);
-    tracing::info!("[Rust] resolve_attachment_path: root={:?}, path={}, full={:?}", root, path, full_path);
     if !full_path.exists() {
         return Err(format!("附件不存在: {}", path));
     }
@@ -654,6 +653,31 @@ pub async fn set_attachments_root(new_root: String) -> Result<(), String> {
 
     tracing::info!("[Rust] Attachments root set to: {}", new_root);
     Ok(())
+}
+
+/// Get storage statistics for attachments directory.
+#[tauri::command]
+pub async fn get_attachments_storage_info(_root: String) -> Result<StorageInfo, String> {
+    let root = crate::config::attachments_root();
+    let mut total_size: u64 = 0;
+    let mut file_count: u64 = 0;
+
+    if root.exists() {
+        for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+            if entry.file_type().is_file() {
+                total_size += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                file_count += 1;
+            }
+        }
+    }
+
+    Ok(StorageInfo { total_size, file_count })
+}
+
+#[derive(serde::Serialize)]
+pub struct StorageInfo {
+    pub total_size: u64,
+    pub file_count: u64,
 }
 
 #[derive(serde::Serialize)]

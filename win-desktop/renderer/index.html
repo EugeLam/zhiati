@@ -285,6 +285,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
           <span>网络</span>
         </button>
+        <button class="settings-nav-item" data-settings="storage">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span>存储</span>
+        </button>
         <button class="settings-nav-item" data-settings="about">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
           <span>关于</span>
@@ -319,6 +323,21 @@
                 <span class="status-text">检查中...</span>
               </div>
             </div>
+          </div>
+        </div>
+        <div id="settings-storage" class="settings-page">
+          <h2>存储设置</h2>
+          <div class="settings-form-group">
+            <label>附件保存位置</label>
+            <div class="settings-input-row">
+              <input type="text" id="settings-attachments-root" placeholder="默认位置" readonly>
+              <button id="settings-attachments-change" class="btn-primary">更改</button>
+            </div>
+            <p class="settings-hint">更改位置后，已有附件会自动迁移到新目录</p>
+          </div>
+          <div class="settings-form-group">
+            <label>存储统计</label>
+            <p id="settings-storage-info" class="settings-hint">加载中...</p>
           </div>
         </div>
         <div id="settings-about" class="settings-page">
