@@ -5,22 +5,77 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import EasyMDE from 'easymde';
 import { marked } from 'marked';
 
-// Custom image renderer: convert local file paths to asset:// URLs for webview
-// Also handles already-converted asset:// URLs
-const markedRenderer = new marked.Renderer();
-markedRenderer.image = function(token) {
-  let src = token.href || '';
-  if (src && !src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('data:') && !src.startsWith('asset://')) {
-    // Decode URL-encoded path then convert
+// Global error handler - visible in webview devtools console
+window.addEventListener('error', (e) => {
+  console.error('[Global Error]', e.message, 'at', e.filename + ':' + e.lineno + ':' + e.colno, e.error);
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[Unhandled Rejection]', e.reason);
+});
+
+console.log('[Main] Module loaded, resolving DOM elements...');
+
+// --- Image path resolution ---
+
+/** Convert markdown content: resolve 'attachments/...' relative paths to asset:// URLs.
+    S3 URLs (http/https) pass through unchanged. */
+async function resolveMarkdownImages(markdown) {
+  const imagePattern = /!\[([^\]]*)\]\((attachments\/[^)]+)\)/g;
+  const replacements = [];
+  let match;
+
+  while ((match = imagePattern.exec(markdown)) !== null) {
+    const relativePath = match[2];
     try {
-      src = convertFileSrc(decodeURIComponent(src));
+      const absPath = await invoke('resolve_attachment_path', { path: relativePath });
+      const assetUrl = convertFileSrc(absPath);
+      replacements.push({ full: match[0], alt: match[1], url: assetUrl });
     } catch (e) {
-      console.warn('[Image] convertFileSrc failed:', src, e);
+      // File not found — keep original, error handler will try to download
     }
   }
-  return `<img src="${src}" alt="${token.text || ''}" title="${token.title || ''}">`;
-};
-marked.setOptions({ renderer: markedRenderer });
+
+  let resolved = markdown;
+  for (const r of replacements) {
+    resolved = resolved.replace(r.full, `![${r.alt}](${r.url})`);
+  }
+  return resolved;
+}
+
+/** Post-render: fix any <img> tags with 'attachments/' src in the DOM */
+/** Check if a src attribute is a relative attachment path */
+function isAttachmentPath(src) {
+  return src && src.startsWith('attachments/');
+}
+
+async function fixPreviewImages() {
+  const images = notePreview.querySelectorAll('img');
+  console.log('[Image] fixPreviewImages: found', images.length, 'images');
+  for (const img of images) {
+    const src = img.getAttribute('src');
+    const resolvedSrc = img.src;
+    console.log('[Image] getAttribute src:', src);
+    console.log('[Image] img.src (resolved):', resolvedSrc);
+    if (src && isAttachmentPath(src)) {
+      try {
+        // Use Tauri command to read file as base64 data URL — bypasses asset protocol scope
+        const dataUrl = await invoke('read_attachment_as_data_url', { path: src });
+        console.log('[Image] loaded as data URL, length:', dataUrl.length);
+        img.src = dataUrl;
+      } catch (e) {
+        console.warn('[Image] resolve failed for', src, ':', e);
+        // Not found — handleImageError will attempt cloud download
+      }
+    }
+  }
+}
+
+/** Render markdown into notePreview, then resolve image paths */
+async function renderPreview(markdown) {
+  notePreview.innerHTML = marked.parse(markdown) || '<p class="preview-empty">暂无内容</p>';
+  await fixPreviewImages();
+}
 
 let notes = [];
 let currentNote = null;
@@ -64,6 +119,18 @@ const bindDialogOverlay = document.getElementById('bind-dialog-overlay');
 const bindDialogCancelBtn = document.getElementById('bind-dialog-cancel-btn');
 const bindDialogBindBtn = document.getElementById('bind-dialog-bind-btn');
 const bindDialogRegisterBtn = document.getElementById('bind-dialog-register-btn');
+
+// Verify critical DOM elements
+const _missingElements = [
+  ['notesList', notesList], ['loginOverlay', loginOverlay], ['app', document.getElementById('app')],
+  ['loginForm', loginForm], ['userBar', userBar], ['newNoteBtn', newNoteBtn],
+  ['bindDialogOverlay', bindDialogOverlay], ['dialogOverlay', document.getElementById('app-dialog-overlay')],
+].filter(([name, el]) => !el).map(([name]) => name);
+if (_missingElements.length > 0) {
+  console.error('[Main] Missing DOM elements:', _missingElements);
+} else {
+  console.log('[Main] All critical DOM elements found');
+}
 
 // Settings panel elements (needed by handleLoginSubmit after binding)
 let localModeToggle = null;
@@ -188,6 +255,7 @@ async function checkAuth() {
       // Local account exists, enter app directly
       const email = await invoke('get_current_user_email');
       currentUserEmail = email;
+      console.log('[Auth] Local account found, email:', email);
       loginOverlay.classList.add('hidden');
       document.getElementById('app').style.display = 'flex';
       if (appMode.is_cloud_connected) {
@@ -198,8 +266,10 @@ async function checkAuth() {
       }
       updateSyncButtonText();
       await loadNotes();
+      console.log('[Auth] App ready, notes loaded');
       return true;
     }
+    console.log('[Auth] No local account, showing login');
   } catch (e) {
     console.log('[Auth] Not authenticated:', e);
   }
@@ -449,10 +519,10 @@ function renderNotes(filter = '') {
 
 // --- Editor logic ---
 
-function togglePreviewPanel() {
+async function togglePreviewPanel() {
   const showingPreview = !editorBody.classList.contains('show-preview');
   if (showingPreview) {
-    notePreview.innerHTML = marked.parse(easyMDE.value()) || '<p class="preview-empty">暂无内容</p>';
+    await renderPreview(easyMDE.value());
   }
   editorBody.classList.toggle('show-preview');
   if (!showingPreview) {
@@ -495,8 +565,8 @@ function initEasyMDE() {
       isContentDirty = false;
       updateSaveBtn();
     }
-    // Live update custom preview
-    notePreview.innerHTML = marked.parse(currentContent) || '<p class="preview-empty">暂无内容</p>';
+    // Live update custom preview (fire-and-forget for image resolution)
+    renderPreview(currentContent);
   });
   fitEditorHeight();
 }
@@ -536,19 +606,16 @@ async function handleImageUpload(editor) {
 
   try {
     const result = await invoke('upload_image', { filePath, noteId: currentNote.id });
-    // result.url = S3 URL if uploaded, raw local path otherwise
-    // result.local_path = raw local path
-    // Always use asset:// URL for webview display (works in both EasyMDE preview and custom preview)
-    let displayUrl = result.url;
-    if (result.url.startsWith('http://') || result.url.startsWith('https://')) {
-      displayUrl = result.url;
-    } else {
-      displayUrl = convertFileSrc(result.local_path);
-    }
-    const markdown = `![${result.filename}](${displayUrl})`;
+    console.log('[Image] Upload result:', result);
+    // Always use local relative path in markdown — renderPreview resolves to asset://
+    const mdPath = result.local_path || result.url;
+    console.log('[Image] Using md path:', mdPath);
+    const markdown = `![${result.filename}](${mdPath})`;
     if (easyMDE) {
       easyMDE.codemirror.replaceSelection(markdown + '\n');
     }
+    // Re-render preview to resolve the new image
+    await renderPreview(easyMDE.value());
   } catch (err) {
     console.error('[Main] Image upload failed:', err);
     await showAlert('图片上传失败: ' + (typeof err === 'string' ? err : '未知错误'));
@@ -599,7 +666,7 @@ async function createNewNote() {
   noteTitle.focus();
 }
 
-function setEditMode() {
+async function setEditMode() {
   isEditMode = true;
   editorBody.classList.remove('preview-mode');
   editorBody.classList.add('edit-mode');
@@ -610,7 +677,7 @@ function setEditMode() {
   // Move preview into EasyMDE container so it sits below the toolbar
   const container = easyMDE.codemirror.getWrapperElement().parentElement;
   container.appendChild(notePreview);
-  notePreview.innerHTML = marked.parse(savedContent) || '<p class="preview-empty">暂无内容</p>';
+  await renderPreview(savedContent);
   editBtn.classList.add('hidden');
   exitEditBtn.classList.remove('hidden');
   updateSaveBtn();
@@ -620,7 +687,7 @@ function setEditMode() {
   }, 100);
 }
 
-function setPreviewMode() {
+async function setPreviewMode() {
   isEditMode = false;
   // Move preview back to editor body
   editorBody.appendChild(notePreview);
@@ -628,7 +695,7 @@ function setPreviewMode() {
   editorBody.classList.remove('edit-mode', 'show-preview');
   editorBody.classList.add('preview-mode');
   noteContent.classList.add('hidden');
-  notePreview.innerHTML = marked.parse(savedContent) || '<p class="preview-empty">暂无内容</p>';
+  await renderPreview(savedContent);
   editBtn.classList.remove('hidden');
   saveBtn.classList.add('hidden');
   exitEditBtn.classList.add('hidden');
@@ -847,6 +914,11 @@ function showNotification(message) {
 
 async function init() {
   console.log('[Main] Initializing...');
+  console.log('[Main] DOM readyState:', document.readyState);
+  console.log('[Main] #app element:', document.getElementById('app'));
+  console.log('[Main] #login-overlay element:', document.getElementById('login-overlay'));
+  console.log('[Main] #notes-list element:', document.getElementById('notes-list'));
+  try {
 
   await listen('notes-updated', (event) => {
     if (event.payload && event.payload.notes) {
@@ -993,12 +1065,17 @@ async function init() {
   // Local mode toggle
   localModeToggle = document.getElementById('settings-local-mode-toggle');
   cloudSettingsSection = document.getElementById('cloud-settings-section');
+  console.log('[Main] localModeToggle element:', localModeToggle);
+  console.log('[Main] cloudSettingsSection element:', cloudSettingsSection);
 
   async function loadLocalModeState() {
+    console.log('[Main] loadLocalModeState: calling get_app_mode...');
     const mode = await invoke('get_app_mode');
+    console.log('[Main] loadLocalModeState: got mode:', mode);
     // local_mode is the inverse of cloud_enabled
     localModeToggle.checked = !mode.cloud_enabled;
     cloudSettingsSection.classList.toggle('hidden', !mode.cloud_enabled);
+    console.log('[Main] loadLocalModeState: done');
   }
 
   localModeToggle.onchange = async () => {
@@ -1029,9 +1106,15 @@ async function init() {
     }
   };
 
+  console.log('[Main] Calling loadLocalModeState...');
   loadLocalModeState();
 
+  console.log('[Main] Calling checkAuth...');
   await checkAuth();
+  console.log('[Main] checkAuth returned, init complete');
+  } catch (e) {
+    console.error('[Main] Init error:', e);
+  }
 }
 
 window.addEventListener('resize', () => {

@@ -43,13 +43,10 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; connect-src 'self' http://localhost:8080 http://127.0.0.1:8080",
       "assetProtocol": {
         "enable": true,
-        "scope": {
-          "allow": ["**"],
-          "deny": []
-        }
+        "scope": ["**"]
       }
     }
   },

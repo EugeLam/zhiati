@@ -116,6 +116,7 @@ pub async fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), St
         local_password_encrypted: cfg.local_password_encrypted,
         bound_cloud_email: cfg.bound_cloud_email,
         cloud_enabled: cfg.cloud_enabled,
+        attachments_root: cfg.attachments_root,
     };
     config::save_config(&c).map_err(|e| format!("保存配置失败: {}", e))?;
 
@@ -146,6 +147,7 @@ pub async fn set_server_url(state: State<'_, AppState>, url: String) -> Result<(
         local_password_encrypted: cfg.local_password_encrypted,
         bound_cloud_email: cfg.bound_cloud_email,
         cloud_enabled: cfg.cloud_enabled,
+        attachments_root: cfg.attachments_root,
     };
     config::save_config(&c).map_err(|e| format!("保存配置失败: {}", e))?;
 
@@ -259,6 +261,7 @@ fn save_auth_state(
         local_password_encrypted: cfg.local_password_encrypted,
         bound_cloud_email: cfg.bound_cloud_email,
         cloud_enabled: cfg.cloud_enabled,
+        attachments_root: cfg.attachments_root,
     };
     config::save_config(&c).map_err(|e| format!("保存配置失败: {}", e))?;
 
@@ -324,6 +327,7 @@ pub async fn bind_cloud_account(
         local_password_encrypted: Some(crate::crypto::encrypt_password(&password)),
         bound_cloud_email: Some(email.clone()),
         cloud_enabled: cfg.cloud_enabled,
+        attachments_root: cfg.attachments_root,
     };
     config::save_config(&c).map_err(|e| format!("保存配置失败: {}", e))?;
 
@@ -407,6 +411,7 @@ pub async fn register_and_bind(
         local_password_encrypted: Some(crate::crypto::encrypt_password(&password)),
         bound_cloud_email: Some(email),
         cloud_enabled: cfg.cloud_enabled,
+        attachments_root: cfg.attachments_root,
     };
     config::save_config(&c).map_err(|e| format!("保存配置失败: {}", e))?;
 

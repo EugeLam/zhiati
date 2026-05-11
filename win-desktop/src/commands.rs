@@ -465,8 +465,8 @@ pub async fn upload_image(
     };
 
     // 1. Save local copy to attachments/{note_id}/
-    let attachments_dir = crate::config::ensure_attachments_dir();
-    let note_dir = attachments_dir.join(&note_id);
+    let root = crate::config::ensure_attachments_root();
+    let note_dir = root.join("attachments").join(&note_id);
     tokio::fs::create_dir_all(&note_dir)
         .await
         .map_err(|e| format!("创建附件目录失败: {}", e))?;
@@ -476,10 +476,9 @@ pub async fn upload_image(
         .await
         .map_err(|e| format!("保存本地副本失败: {}", e))?;
 
-    // Save raw path for frontend convertFileSrc usage
-    // Normalize to forward slashes for consistent markdown storage
-    let local_path_str = local_path.to_string_lossy().replace('\\', "/");
-    tracing::info!("[Rust] Saved local copy: {}", local_path_str);
+    // Store relative path from attachments_root: attachments/{note_id}/{uuid}.ext
+    let relative_path = format!("attachments/{}/{}", note_id, local_file_name);
+    tracing::info!("[Rust] Saved local copy: {}", relative_path);
 
     // 2. Try upload to S3 (non-fatal if unavailable)
     let server_url = get_server_url(&state).ok();
@@ -525,18 +524,18 @@ pub async fn upload_image(
         }
     }
 
-    // Return S3 URL if available, otherwise raw local path (frontend converts via convertFileSrc)
-    let final_url = s3_url.unwrap_or_else(|| local_path_str.clone());
+    // Return S3 URL if available, otherwise relative path (frontend resolves to actual location)
+    let final_url = s3_url.unwrap_or_else(|| relative_path.clone());
 
     Ok(ImageUploadResult {
         filename: file_name,
         url: final_url,
-        local_path: local_path_str,
+        local_path: relative_path,
     })
 }
 
-/// Download an attachment from cloud (S3 URL) to local cache, return local file:// path.
-/// If already cached, return the cached path directly.
+/// Download an attachment from cloud (S3 URL) to local cache, return relative path.
+/// If already cached, return the cached relative path directly.
 #[tauri::command]
 pub async fn download_attachment(
     _state: tauri::State<'_, AppState>,
@@ -546,8 +545,8 @@ pub async fn download_attachment(
 ) -> Result<String, String> {
     tracing::info!("[Rust] download_attachment: url={} note_id={}", url, note_id);
 
-    let attachments_dir = crate::config::ensure_attachments_dir();
-    let note_dir = attachments_dir.join(&note_id);
+    let root = crate::config::ensure_attachments_root();
+    let note_dir = root.join("attachments").join(&note_id);
     tokio::fs::create_dir_all(&note_dir)
         .await
         .map_err(|e| format!("创建附件目录失败: {}", e))?;
@@ -555,8 +554,9 @@ pub async fn download_attachment(
     // Check if already cached
     let local_path = note_dir.join(&filename);
     if local_path.exists() {
-        tracing::info!("[Rust] Cache hit: {:?}", local_path);
-        return Ok(local_path.to_string_lossy().replace('\\', "/"));
+        let relative = format!("attachments/{}/{}", note_id, filename);
+        tracing::info!("[Rust] Cache hit: {}", relative);
+        return Ok(relative);
     }
 
     // Download from S3/cloud URL
@@ -580,8 +580,80 @@ pub async fn download_attachment(
         .await
         .map_err(|e| format!("保存文件失败: {}", e))?;
 
-    tracing::info!("[Rust] Downloaded to: {:?} ({} bytes)", local_path, bytes.len());
-    Ok(local_path.to_string_lossy().to_string())
+    let relative = format!("attachments/{}/{}", note_id, filename);
+    tracing::info!("[Rust] Downloaded: {} ({} bytes)", relative, bytes.len());
+    Ok(relative)
+}
+
+/// Resolve a relative attachment path (attachments/note_id/filename) to absolute path.
+/// The frontend uses this to convert to asset:// URLs via convertFileSrc.
+#[tauri::command]
+pub async fn resolve_attachment_path(path: String) -> Result<String, String> {
+    let root = crate::config::attachments_root();
+    let full_path = root.join(&path);
+    tracing::info!("[Rust] resolve_attachment_path: root={:?}, path={}, full={:?}", root, path, full_path);
+    if !full_path.exists() {
+        return Err(format!("附件不存在: {}", path));
+    }
+    Ok(full_path.to_string_lossy().replace('\\', "/"))
+}
+
+/// Read an attachment file and return its content as a base64 data URL.
+/// This is a fallback for when the asset protocol is blocked by scope restrictions.
+#[tauri::command]
+pub async fn read_attachment_as_data_url(path: String) -> Result<String, String> {
+    let root = crate::config::attachments_root();
+    let full_path = root.join(&path);
+    if !full_path.exists() {
+        return Err(format!("附件不存在: {}", path));
+    }
+    let bytes = tokio::fs::read(&full_path)
+        .await
+        .map_err(|e| format!("读取文件失败: {}", e))?;
+    let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    let mime = match ext {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => "image/png",
+    };
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, encoded))
+}
+
+/// Get the current attachments root directory path.
+#[tauri::command]
+pub async fn get_attachments_root() -> Result<String, String> {
+    let root = crate::config::attachments_root();
+    Ok(root.to_string_lossy().replace('\\', "/"))
+}
+
+/// Change attachments root directory and migrate existing files.
+#[tauri::command]
+pub async fn set_attachments_root(new_root: String) -> Result<(), String> {
+    let old_root = crate::config::attachments_root();
+    let new_root_path = std::path::PathBuf::from(&new_root);
+
+    // Validate: new root must be writable
+    std::fs::create_dir_all(&new_root_path)
+        .map_err(|e| format!("无法创建目录: {}", e))?;
+
+    // Migrate existing files if old root differs
+    if old_root != new_root_path && old_root.exists() {
+        tracing::info!("[Rust] Migrating attachments from {:?} to {:?}", old_root, new_root_path);
+        crate::config::migrate_attachments(old_root, new_root_path.clone())?;
+    }
+
+    // Save config
+    let mut cfg = crate::config::load_config();
+    cfg.attachments_root = Some(new_root.clone());
+    crate::config::save_config(&cfg)?;
+
+    tracing::info!("[Rust] Attachments root set to: {}", new_root);
+    Ok(())
 }
 
 #[derive(serde::Serialize)]

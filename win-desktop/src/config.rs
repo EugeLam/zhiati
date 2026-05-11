@@ -17,6 +17,9 @@ pub struct Config {
     pub bound_cloud_email: Option<String>,
     #[serde(default = "default_true")]
     pub cloud_enabled: bool,
+    /// Root directory for local attachment storage. Markdown stores relative paths from here.
+    #[serde(default)]
+    pub attachments_root: Option<String>,
 }
 
 fn default_server_url() -> String {
@@ -38,6 +41,7 @@ impl Default for Config {
             local_password_encrypted: None,
             bound_cloud_email: None,
             cloud_enabled: true,
+            attachments_root: None, // None means use default
         }
     }
 }
@@ -48,16 +52,64 @@ pub fn config_dir() -> PathBuf {
         .join("zhiati")
 }
 
-/// Local attachments cache directory: {config_dir}/attachments/
-pub fn attachments_dir() -> PathBuf {
-    config_dir().join("attachments")
+/// Default attachments root: {config_dir}/
+/// Actual attachments live in {config_dir}/attachments/, and markdown stores
+/// relative paths like 'attachments/{note_id}/{uuid}.ext', so the root should be config_dir().
+fn default_attachments_root() -> PathBuf {
+    config_dir()
 }
 
-/// Ensure attachments directory exists, return absolute path
-pub fn ensure_attachments_dir() -> PathBuf {
-    let dir = attachments_dir();
+/// Get the attachments root directory. Returns configured path or default.
+pub fn attachments_root() -> PathBuf {
+    let cfg = load_config();
+    cfg.attachments_root
+        .map(PathBuf::from)
+        .unwrap_or_else(default_attachments_root)
+}
+
+/// Ensure attachments root exists, return absolute path
+pub fn ensure_attachments_root() -> PathBuf {
+    let dir = attachments_root();
     let _ = fs::create_dir_all(&dir);
     dir
+}
+
+/// Migrate attachments from old root to new root. Moves all files.
+pub fn migrate_attachments(old_root: PathBuf, new_root: PathBuf) -> Result<(), String> {
+    if !old_root.exists() || !old_root.is_dir() {
+        return Ok(()); // nothing to migrate
+    }
+    fs::create_dir_all(&new_root)
+        .map_err(|e| format!("创建目标目录失败: {}", e))?;
+
+    // Move all note subdirectories
+    for entry in fs::read_dir(&old_root)
+        .map_err(|e| format!("读取源目录失败: {}", e))?
+    {
+        let entry = entry.map_err(|e| format!("读取条目失败: {}", e))?;
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            let src = entry.path();
+            let dst = new_root.join(entry.file_name());
+            if dst.exists() {
+                // Merge: copy files that don't exist in destination
+                if let Ok(files) = fs::read_dir(&src) {
+                    for f in files.flatten() {
+                        let dest_file = dst.join(f.file_name());
+                        if !dest_file.exists() {
+                            let _ = fs::copy(f.path(), &dest_file);
+                        }
+                    }
+                }
+                let _ = fs::remove_dir_all(&src);
+            } else {
+                fs::rename(&src, &dst)
+                    .map_err(|e| format!("移动目录失败 {:?}: {}", src, e))?;
+            }
+        }
+    }
+    // Remove old root if empty
+    let _ = fs::remove_dir(&old_root);
+    Ok(())
 }
 
 fn config_path() -> PathBuf {
