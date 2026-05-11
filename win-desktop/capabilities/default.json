@@ -24,6 +24,7 @@
     "core:window:allow-close",
     "core:webview:default",
     "core:webview:allow-create-webview-window",
+    "core:path:default",
     "shell:allow-open",
     "notification:default",
     "notification:allow-notify",

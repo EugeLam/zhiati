@@ -1,9 +1,12 @@
 use axum::{
     Json,
-    extract::{Multipart, Path, State},
+    body::Body,
+    extract::{Multipart, Path, Query, State},
     http::{header::AUTHORIZATION, HeaderMap},
+    response::Response,
 };
 use aws_sdk_s3::primitives::ByteStream;
+use serde::Deserialize;
 use uuid::Uuid;
 use zhiati_shared::{ApiResponse, Attachment, AttachmentUploadResponse};
 
@@ -156,4 +159,62 @@ pub async fn delete_attachment(
         .await?;
 
     Ok(Json(ApiResponse::success(())))
+}
+
+#[derive(Deserialize)]
+pub struct DownloadQuery {
+    pub s3_key: String,
+}
+
+/// Download an attachment by s3_key. Authenticates the user, then streams the file from S3.
+pub async fn download_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<DownloadQuery>,
+) -> Result<Response, AppError> {
+    let user_id = extract_user_id_from_headers(&headers, &state.jwt_secret)?;
+
+    // Verify the attachment belongs to this user
+    let attachment: Option<Attachment> = sqlx::query_as(
+        "SELECT id, note_id, user_id, filename, mime_type, size, s3_key, created_at FROM attachments WHERE s3_key = $1 AND user_id = $2",
+    )
+    .bind(&query.s3_key)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let attachment = attachment
+        .ok_or_else(|| AppError::NotFound("Attachment not found".to_string()))?;
+
+    // Fetch from S3
+    let object = state
+        .s3_client
+        .get_object()
+        .bucket(&state.s3_bucket)
+        .key(&attachment.s3_key)
+        .send()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Failed to fetch from S3: {}", e)))?;
+
+    let body_bytes = object
+        .body
+        .collect()
+        .await
+        .map_err(|e| AppError::InternalError(format!("Failed to read S3 body: {}", e)))?
+        .into_bytes();
+
+    let content_type = attachment.mime_type.unwrap_or_else(|| "application/octet-stream".to_string());
+
+    let mut response = Response::new(Body::from(body_bytes.to_vec()));
+    response
+        .headers_mut()
+        .insert("Content-Type",
+            content_type.parse().unwrap_or_else(|_| "application/octet-stream".parse().unwrap()));
+    response
+        .headers_mut()
+        .insert("Content-Disposition",
+            format!("inline; filename=\"{}\"", attachment.filename)
+                .parse()
+                .unwrap_or_else(|_| "inline".parse().unwrap()));
+    Ok(response)
 }

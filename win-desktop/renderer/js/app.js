@@ -1,9 +1,26 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import EasyMDE from 'easymde';
 import { marked } from 'marked';
+
+// Custom image renderer: convert local file paths to asset:// URLs for webview
+// Also handles already-converted asset:// URLs
+const markedRenderer = new marked.Renderer();
+markedRenderer.image = function(token) {
+  let src = token.href || '';
+  if (src && !src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('data:') && !src.startsWith('asset://')) {
+    // Decode URL-encoded path then convert
+    try {
+      src = convertFileSrc(decodeURIComponent(src));
+    } catch (e) {
+      console.warn('[Image] convertFileSrc failed:', src, e);
+    }
+  }
+  return `<img src="${src}" alt="${token.text || ''}" title="${token.title || ''}">`;
+};
+marked.setOptions({ renderer: markedRenderer });
 
 let notes = [];
 let currentNote = null;
@@ -48,8 +65,76 @@ const bindDialogCancelBtn = document.getElementById('bind-dialog-cancel-btn');
 const bindDialogBindBtn = document.getElementById('bind-dialog-bind-btn');
 const bindDialogRegisterBtn = document.getElementById('bind-dialog-register-btn');
 
+// Settings panel elements (needed by handleLoginSubmit after binding)
+let localModeToggle = null;
+let cloudSettingsSection = null;
+
 let isRegisterMode = false;
 let loginMode = 'local_setup'; // 'local_setup' | 'cloud_bind' | 'cloud_register'
+
+// --- Image Cache & Fallback ---
+
+// Track images already processed to avoid redundant downloads
+const imageCache = new Set();
+
+/** Check if URL is a cloud/remote URL (http/https) */
+function isCloudUrl(url) {
+  return url && (url.startsWith('http://') || url.startsWith('https://'));
+}
+
+/** Check if URL is a local file:// URL */
+function isLocalFileUrl(url) {
+  return url && url.startsWith('file://');
+}
+
+/** Extract note_id and filename from an S3 URL like
+    http://127.0.0.1:9000/bucket/attachments/{user_id}/{uuid}.ext
+    Returns { noteId: null, filename: 'uuid.ext' } (note_id from note context) */
+function extractImageInfo(url) {
+  try {
+    const urlObj = new URL(url);
+    const parts = urlObj.pathname.split('/').filter(Boolean);
+    const filename = parts[parts.length - 1] || 'image.png';
+    // note_id comes from current note context, not the URL
+    return { filename };
+  } catch {
+    return { filename: 'image.png' };
+  }
+}
+
+/** Handle a failed <img> load — download from cloud to local cache */
+async function handleImageError(img) {
+  const src = img.getAttribute('src');
+  if (!src || !isCloudUrl(src)) return;
+  if (imageCache.has(src)) return;
+  imageCache.add(src);
+
+  const { filename } = extractImageInfo(src);
+  const noteId = currentNote?.id;
+  if (!noteId) return;
+
+  try {
+    console.log('[Image] Downloading to cache:', src);
+    const rawPath = await invoke('download_attachment', {
+      url: src,
+      noteId,
+      filename,
+    });
+    img.src = convertFileSrc(rawPath);
+    console.log('[Image] Cached locally:', img.src);
+  } catch (err) {
+    console.warn('[Image] Failed to download:', src, err);
+  }
+}
+
+/** Set up image error interception on the preview container (capture phase) */
+function initImageFallback() {
+  notePreview.addEventListener('error', (e) => {
+    if (e.target.tagName === 'IMG') {
+      handleImageError(e.target);
+    }
+  }, true); // capture phase
+}
 
 // --- Custom Dialog ---
 
@@ -167,6 +252,8 @@ async function handleLoginSubmit(e) {
   try {
     if (loginMode === 'cloud_bind') {
       await invoke('bind_cloud_account', { email, password });
+      // Enable cloud mode since user was trying to switch to cloud
+      await invoke('toggle_cloud', { enabled: true });
       loginOverlay.classList.add('hidden');
       bindDialogOverlay.classList.add('hidden');
       document.getElementById('app').style.display = 'flex';
@@ -175,14 +262,18 @@ async function handleLoginSubmit(e) {
       userBar.classList.remove('hidden');
       userEmailDisplay.textContent = email;
       updateSyncButtonText();
-      await loadNotes();
       await syncNotes();
       await emit('auth-changed', true);
+      // Sync local mode toggle to reflect cloud enabled
+      if (localModeToggle) localModeToggle.checked = false;
+      if (cloudSettingsSection) cloudSettingsSection.classList.toggle('hidden', false);
       return;
     }
 
     if (loginMode === 'cloud_register') {
       await invoke('register_and_bind', { email, password });
+      // Enable cloud mode since user was trying to switch to cloud
+      await invoke('toggle_cloud', { enabled: true });
       loginOverlay.classList.add('hidden');
       bindDialogOverlay.classList.add('hidden');
       document.getElementById('app').style.display = 'flex';
@@ -191,9 +282,11 @@ async function handleLoginSubmit(e) {
       userBar.classList.remove('hidden');
       userEmailDisplay.textContent = email;
       updateSyncButtonText();
-      await loadNotes();
       await syncNotes();
       await emit('auth-changed', true);
+      // Sync local mode toggle to reflect cloud enabled
+      if (localModeToggle) localModeToggle.checked = false;
+      if (cloudSettingsSection) cloudSettingsSection.classList.toggle('hidden', false);
       return;
     }
 
@@ -443,7 +536,16 @@ async function handleImageUpload(editor) {
 
   try {
     const result = await invoke('upload_image', { filePath, noteId: currentNote.id });
-    const markdown = `![${result.filename}](${result.url})`;
+    // result.url = S3 URL if uploaded, raw local path otherwise
+    // result.local_path = raw local path
+    // Always use asset:// URL for webview display (works in both EasyMDE preview and custom preview)
+    let displayUrl = result.url;
+    if (result.url.startsWith('http://') || result.url.startsWith('https://')) {
+      displayUrl = result.url;
+    } else {
+      displayUrl = convertFileSrc(result.local_path);
+    }
+    const markdown = `![${result.filename}](${displayUrl})`;
     if (easyMDE) {
       easyMDE.codemirror.replaceSelection(markdown + '\n');
     }
@@ -791,6 +893,9 @@ async function init() {
     if (!isEditMode) toggleEdit();
   });
 
+  // Image error fallback — download failed cloud images to local cache
+  initImageFallback();
+
   // Title bar controls
   const appWindow = getCurrentWebviewWindow();
   document.getElementById('titlebar-minimize').onclick = () => {
@@ -886,9 +991,8 @@ async function init() {
   };
 
   // Local mode toggle
-  const localModeToggle = document.getElementById('settings-local-mode-toggle');
-
-  const cloudSettingsSection = document.getElementById('cloud-settings-section');
+  localModeToggle = document.getElementById('settings-local-mode-toggle');
+  cloudSettingsSection = document.getElementById('cloud-settings-section');
 
   async function loadLocalModeState() {
     const mode = await invoke('get_app_mode');
@@ -945,7 +1049,10 @@ async function syncNotes() {
   icon.classList.add('spinning');
   syncBtn.disabled = true;
   try {
-    await loadNotes();
+    const result = await invoke('sync_notes');
+    notes = result || [];
+    console.log('[Main] Synced notes:', notes.length);
+    renderNotes(searchInput.value);
   } finally {
     isActionLoading = false;
     syncBtn.disabled = false;

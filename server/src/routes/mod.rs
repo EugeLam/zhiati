@@ -35,5 +35,6 @@ pub fn attachments_routes() -> Router<AppState> {
     Router::new()
         .route("/upload", axum::routing::post(attachments::upload_attachment)
             .layer(DefaultBodyLimit::max(20 * 1024 * 1024)))
+        .route("/download", axum::routing::get(attachments::download_attachment))
         .route("/:id", axum::routing::delete(attachments::delete_attachment))
 }

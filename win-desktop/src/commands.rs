@@ -429,6 +429,7 @@ pub async fn set_window_level(app: tauri::AppHandle, window_label: String, level
 pub struct ImageUploadResult {
     pub filename: String,
     pub url: String,
+    pub local_path: String,
 }
 
 #[tauri::command]
@@ -439,97 +440,148 @@ pub async fn upload_image(
 ) -> Result<ImageUploadResult, String> {
     tracing::info!("[Rust] upload_image called: {}", file_path);
 
-    let server_url = get_server_url(&state)?;
-    let token = get_token(&state)?;
-    tracing::info!("[Rust] upload target: {}/api/attachments/upload", server_url);
-
     let file_bytes = tokio::fs::read(&file_path)
         .await
-        .map_err(|e| {
-            tracing::error!("[Rust] Failed to read file: {}", e);
-            format!("读取文件失败: {}", e)
-        })?;
+        .map_err(|e| format!("读取文件失败: {}", e))?;
     tracing::info!("[Rust] File size: {} bytes", file_bytes.len());
 
+    let ext = std::path::Path::new(&file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or("png".to_string());
     let file_name = std::path::Path::new(&file_path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("image.png")
         .to_string();
-
-    // Detect MIME type from extension (case-insensitive)
-    let ext = std::path::Path::new(&file_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_ascii_lowercase());
-    let mime_type = match ext.as_deref() {
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("gif") => "image/gif",
-        Some("webp") => "image/webp",
-        Some("svg") => "image/svg+xml",
+    let mime_type = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
         _ => "image/png",
     };
 
-    let part = reqwest::multipart::Part::bytes(file_bytes.clone())
-        .file_name(file_name.clone())
-        .mime_str(mime_type)
-        .map_err(|e| format!("设置文件类型失败: {}", e))?;
+    // 1. Save local copy to attachments/{note_id}/
+    let attachments_dir = crate::config::ensure_attachments_dir();
+    let note_dir = attachments_dir.join(&note_id);
+    tokio::fs::create_dir_all(&note_dir)
+        .await
+        .map_err(|e| format!("创建附件目录失败: {}", e))?;
+    let local_file_name = format!("{}.{}", uuid::Uuid::new_v4(), ext);
+    let local_path = note_dir.join(&local_file_name);
+    tokio::fs::write(&local_path, &file_bytes)
+        .await
+        .map_err(|e| format!("保存本地副本失败: {}", e))?;
 
-    let form = reqwest::multipart::Form::new()
-        .part("file", part)
-        .text("note_id", note_id);
+    // Save raw path for frontend convertFileSrc usage
+    // Normalize to forward slashes for consistent markdown storage
+    let local_path_str = local_path.to_string_lossy().replace('\\', "/");
+    tracing::info!("[Rust] Saved local copy: {}", local_path_str);
 
-    let client = build_client();
-    let url = format!("{}/api/attachments/upload", server_url);
-    tracing::info!("[Rust] Building request to: {}", url);
-    tracing::info!("[Rust] File size: {}, MIME: {}", file_bytes.len(), mime_type);
+    // 2. Try upload to S3 (non-fatal if unavailable)
+    let server_url = get_server_url(&state).ok();
+    let token = get_token(&state).ok();
+    let mut s3_url: Option<String> = None;
 
-    // Quick connectivity test
-    match client.get(&format!("{}/health", server_url)).send().await {
-        Ok(r) => tracing::info!("[Rust] Health check: {}", r.status()),
-        Err(e) => tracing::error!("[Rust] Health check failed: {:?}", e),
-    }
+    if let (Some(srv), Some(tok)) = (&server_url, &token) {
+        let part = reqwest::multipart::Part::bytes(file_bytes.clone())
+            .file_name(file_name.clone())
+            .mime_str(mime_type)
+            .map_err(|e| format!("设置文件类型失败: {}", e))?;
+        let form = reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("note_id", note_id.clone());
+        let upload_url = format!("{}/api/attachments/upload", srv);
+        let client = build_client();
 
-    // Wrap in std::panic::catch_unwind to capture any panics
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client
-            .post(&url)
-            .header("Authorization", auth_header(&token))
+        match client
+            .post(&upload_url)
+            .header("Authorization", auth_header(tok))
             .multipart(form)
             .send()
-    }));
-
-    let resp = match result {
-        Ok(fut) => match fut.await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!("[Rust] Upload request error: {:?}", e);
-                return Err(format!("上传请求失败: {:?}", e));
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(body) = resp
+                    .json::<shared::ApiResponse<shared::AttachmentUploadResponse>>()
+                    .await
+                {
+                    if let Some(data) = body.data {
+                        s3_url = Some(data.url.clone());
+                        tracing::info!("[Rust] Uploaded to S3: {}", data.url);
+                    }
+                }
             }
-        },
-        Err(_panic) => {
-            tracing::error!("[Rust] Upload request panicked!");
-            return Err("上传图片时发生内部错误".to_string());
+            Ok(resp) => {
+                let err = resp.text().await.unwrap_or_default();
+                tracing::warn!("[Rust] S3 upload failed: {}", err);
+            }
+            Err(e) => {
+                tracing::warn!("[Rust] S3 upload error: {:?}", e);
+            }
         }
-    };
-
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("上传失败: {}", body));
     }
 
-    let body: shared::ApiResponse<shared::AttachmentUploadResponse> = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析响应失败: {}", e))?;
-
-    let data = body.data.ok_or_else(|| "上传失败: 无效响应".to_string())?;
+    // Return S3 URL if available, otherwise raw local path (frontend converts via convertFileSrc)
+    let final_url = s3_url.unwrap_or_else(|| local_path_str.clone());
 
     Ok(ImageUploadResult {
-        filename: data.filename,
-        url: data.url,
+        filename: file_name,
+        url: final_url,
+        local_path: local_path_str,
     })
+}
+
+/// Download an attachment from cloud (S3 URL) to local cache, return local file:// path.
+/// If already cached, return the cached path directly.
+#[tauri::command]
+pub async fn download_attachment(
+    _state: tauri::State<'_, AppState>,
+    url: String,
+    note_id: String,
+    filename: String,
+) -> Result<String, String> {
+    tracing::info!("[Rust] download_attachment: url={} note_id={}", url, note_id);
+
+    let attachments_dir = crate::config::ensure_attachments_dir();
+    let note_dir = attachments_dir.join(&note_id);
+    tokio::fs::create_dir_all(&note_dir)
+        .await
+        .map_err(|e| format!("创建附件目录失败: {}", e))?;
+
+    // Check if already cached
+    let local_path = note_dir.join(&filename);
+    if local_path.exists() {
+        tracing::info!("[Rust] Cache hit: {:?}", local_path);
+        return Ok(local_path.to_string_lossy().replace('\\', "/"));
+    }
+
+    // Download from S3/cloud URL
+    let client = build_client();
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("下载失败: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("下载失败: HTTP {}", resp.status()));
+    }
+
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
+
+    tokio::fs::write(&local_path, &bytes)
+        .await
+        .map_err(|e| format!("保存文件失败: {}", e))?;
+
+    tracing::info!("[Rust] Downloaded to: {:?} ({} bytes)", local_path, bytes.len());
+    Ok(local_path.to_string_lossy().to_string())
 }
 
 #[derive(serde::Serialize)]

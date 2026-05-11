@@ -48,6 +48,18 @@ pub fn config_dir() -> PathBuf {
         .join("zhiati")
 }
 
+/// Local attachments cache directory: {config_dir}/attachments/
+pub fn attachments_dir() -> PathBuf {
+    config_dir().join("attachments")
+}
+
+/// Ensure attachments directory exists, return absolute path
+pub fn ensure_attachments_dir() -> PathBuf {
+    let dir = attachments_dir();
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 fn config_path() -> PathBuf {
     config_dir().join("config.json")
 }

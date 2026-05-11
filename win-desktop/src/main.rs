@@ -194,6 +194,7 @@ fn main() {
             commands::show_main_window,
             commands::test_reminder,
             commands::upload_image,
+            commands::download_attachment,
             commands::get_app_mode,
             commands::setup_local_account,
             commands::toggle_cloud,
