@@ -246,26 +246,47 @@ async function checkAuth() {
     appMode = await invoke('get_app_mode');
 
     if (appMode.local_account_exists) {
-      // Local account exists, enter app directly
-      const email = await invoke('get_current_user_email');
-      currentUserEmail = email;
-      loginOverlay.classList.add('hidden');
-      document.getElementById('app').style.display = 'flex';
-      if (appMode.is_cloud_connected) {
-        userBar.classList.remove('hidden');
-        userEmailDisplay.textContent = email || '';
-      } else {
-        userBar.classList.add('hidden');
-      }
-      updateSyncButtonText();
-      await loadNotes();
-      return true;
+      // Local account exists → show password login
+      showLocalLogin();
+      return false;
     }
   } catch (e) {
     console.log('[Auth] Not authenticated:', e);
   }
+  // No local account → show setup page
   showLogin();
   return false;
+}
+
+function showLocalLogin() {
+  loginMode = 'local_login';
+  loginOverlay.classList.remove('hidden');
+  document.getElementById('app').style.display = 'none';
+  userBar.classList.add('hidden');
+  notes = [];
+  currentNote = null;
+  renderNotes();
+  editor.classList.add('hidden');
+  welcome.classList.remove('hidden');
+  const formTitle = document.querySelector('#login-overlay h2');
+  if (formTitle) formTitle.textContent = '纸条';
+  const submitBtn = loginForm.querySelector('button');
+  if (submitBtn) submitBtn.textContent = '登录';
+  const loginHint = document.getElementById('login-hint-text');
+  if (loginHint) loginHint.style.display = '';
+  if (switchLink) switchLink.style.display = 'none';
+  loginError.textContent = '';
+  // Pre-fill email (read-only)
+  invoke('get_current_user_email').then(email => {
+    const emailInput = document.getElementById('login-email');
+    emailInput.value = email || '';
+    emailInput.readOnly = true;
+    emailInput.classList.add('login-email-readonly');
+    // Focus password field
+    document.getElementById('login-password').focus();
+  });
+  document.getElementById('login-password').value = '';
+  updateSyncButtonText();
 }
 
 function showLogin() {
@@ -286,7 +307,10 @@ function showLogin() {
   if (loginHint) loginHint.style.display = '';
   if (switchLink) switchLink.style.display = 'none';
   loginError.textContent = '';
-  document.getElementById('login-email').value = '';
+  const emailInput = document.getElementById('login-email');
+  emailInput.value = '';
+  emailInput.readOnly = false;
+  emailInput.classList.remove('login-email-readonly');
   document.getElementById('login-password').value = '';
   updateSyncButtonText();
 }
@@ -298,8 +322,12 @@ async function handleLoginSubmit(e) {
   loginError.textContent = '';
   console.log('[Login] Mode:', loginMode, 'email:', email);
 
-  if (!email || !password) {
-    loginError.textContent = '请输入邮箱和密码';
+  if (!password) {
+    loginError.textContent = '请输入密码';
+    return;
+  }
+  if (loginMode !== 'local_login' && !email) {
+    loginError.textContent = '请输入邮箱';
     return;
   }
 
@@ -313,7 +341,6 @@ async function handleLoginSubmit(e) {
   try {
     if (loginMode === 'cloud_bind') {
       await invoke('bind_cloud_account', { email, password });
-      // Enable cloud mode since user was trying to switch to cloud
       await invoke('toggle_cloud', { enabled: true });
       loginOverlay.classList.add('hidden');
       bindDialogOverlay.classList.add('hidden');
@@ -325,7 +352,6 @@ async function handleLoginSubmit(e) {
       updateSyncButtonText();
       await syncNotes();
       await emit('auth-changed', true);
-      // Sync toggle to reflect cloud enabled
       if (localModeToggle) localModeToggle.checked = true;
       if (cloudSettingsSection) cloudSettingsSection.classList.toggle('hidden', false);
       return;
@@ -351,6 +377,19 @@ async function handleLoginSubmit(e) {
       return;
     }
 
+    if (loginMode === 'local_login') {
+      await invoke('verify_local_password', { password });
+      loginOverlay.classList.add('hidden');
+      document.getElementById('app').style.display = 'flex';
+      const currentUserEmail = await invoke('get_current_user_email');
+      window.currentUserEmail = currentUserEmail;
+      userBar.classList.remove('hidden');
+      userEmailDisplay.textContent = currentUserEmail || '';
+      updateSyncButtonText();
+      await loadNotes();
+      return;
+    }
+
     await invoke('setup_local_account', { email, password });
     console.log('[Login] Local account setup complete');
 
@@ -358,12 +397,8 @@ async function handleLoginSubmit(e) {
     currentUserEmail = email;
     loginOverlay.classList.add('hidden');
     document.getElementById('app').style.display = 'flex';
-    if (appMode.is_cloud_connected) {
-      userBar.classList.remove('hidden');
-      userEmailDisplay.textContent = email;
-    } else {
-      userBar.classList.add('hidden');
-    }
+    userBar.classList.remove('hidden');
+    userEmailDisplay.textContent = email;
     document.getElementById('login-password').value = '';
     updateSyncButtonText();
     await loadNotes();
@@ -401,7 +436,12 @@ async function handleLogout() {
   if (!await showConfirm('确定要退出登录吗？')) return;
   try {
     await invoke('logout');
-    showLogin();
+    appMode = await invoke('get_app_mode');
+    if (appMode.local_account_exists) {
+      showLocalLogin();
+    } else {
+      showLogin();
+    }
     await emit('notes-updated', { notes: [] });
   } catch (e) {
     console.error('[Main] Failed to logout:', e);
@@ -434,7 +474,10 @@ function showCloudLogin() {
     switchLink.onclick = (e) => { e.preventDefault(); showCloudRegister(); };
   }
   loginError.textContent = '';
-  document.getElementById('login-email').value = '';
+  const emailInput = document.getElementById('login-email');
+  emailInput.value = '';
+  emailInput.readOnly = false;
+  emailInput.classList.remove('login-email-readonly');
   document.getElementById('login-password').value = '';
   loginOverlay.classList.remove('hidden');
   document.getElementById('login-email').focus();
@@ -455,7 +498,10 @@ function showCloudRegister() {
     switchLink.id = 'switch-to-login';
     switchLink.onclick = (e) => { e.preventDefault(); showCloudLogin(); };
   }
-  document.getElementById('login-email').value = '';
+  const emailInput2 = document.getElementById('login-email');
+  emailInput2.value = '';
+  emailInput2.readOnly = false;
+  emailInput2.classList.remove('login-email-readonly');
   document.getElementById('login-password').value = '';
   loginOverlay.classList.remove('hidden');
   document.getElementById('login-email').focus();
@@ -1144,12 +1190,14 @@ async function init() {
         }
         // Already bound - enable cloud and sync
         await invoke('toggle_cloud', { enabled: true });
+        appMode = await invoke('get_app_mode');
         cloudSettingsSection.classList.toggle('hidden', false);
         updateSyncButtonText();
         await syncNotes();
       } else {
         // Disabling cloud mode (switching to local mode)
         await invoke('toggle_cloud', { enabled: false });
+        appMode = await invoke('get_app_mode');
         cloudSettingsSection.classList.toggle('hidden', true);
         updateSyncButtonText();
       }
@@ -1160,6 +1208,114 @@ async function init() {
   };
 
   loadLocalModeState();
+
+  // Login page settings panel
+  const loginSettingsBtn = document.getElementById('login-settings-btn');
+  const loginSettingsOverlay = document.getElementById('login-settings-overlay');
+  const loginSettingsCloseBtn = document.getElementById('login-settings-close-btn');
+
+  loginSettingsBtn.onclick = () => {
+    loginSettingsOverlay.classList.remove('hidden');
+    loadLoginSettings();
+  };
+
+  loginSettingsCloseBtn.onclick = () => {
+    loginSettingsOverlay.classList.add('hidden');
+  };
+
+  // Login settings tab switching
+  document.querySelectorAll('.login-settings-nav-item').forEach(item => {
+    item.onclick = () => {
+      document.querySelectorAll('.login-settings-nav-item').forEach(i => i.classList.remove('active'));
+      document.querySelectorAll('.login-settings-page').forEach(p => p.classList.remove('active'));
+      item.classList.add('active');
+      const page = item.dataset.loginSettings;
+      document.getElementById(`login-settings-${page}`).classList.add('active');
+      if (page === 'storage') loadLoginStorageSettings();
+    };
+  });
+
+  // Login settings: server URL save
+  document.getElementById('login-settings-server-save').onclick = async () => {
+    const url = document.getElementById('login-settings-server-url').value.trim();
+    if (!url) { await showAlert('请输入后端地址'); return; }
+    try {
+      await invoke('set_server_url', { url });
+      await showAlert('保存成功');
+    } catch (e) {
+      await showAlert('保存失败: ' + e);
+    }
+  };
+
+  // Login settings: cloud mode toggle
+  const loginCloudToggle = document.getElementById('login-local-mode-toggle');
+  const loginCloudSection = document.getElementById('login-cloud-settings-section');
+  loginCloudToggle.onchange = async () => {
+    try {
+      if (loginCloudToggle.checked) {
+        const currentMode = await invoke('get_app_mode');
+        if (!currentMode.cloud_account_bound) {
+          loginCloudToggle.checked = false;
+          loginSettingsOverlay.classList.add('hidden');
+          showBindDialog();
+          return;
+        }
+        await invoke('toggle_cloud', { enabled: true });
+        loginCloudSection.classList.toggle('hidden', false);
+      } else {
+        await invoke('toggle_cloud', { enabled: false });
+        loginCloudSection.classList.toggle('hidden', true);
+      }
+      appMode = await invoke('get_app_mode');
+    } catch (e) {
+      await showAlert('切换失败: ' + e);
+      loginCloudToggle.checked = !loginCloudToggle.checked;
+    }
+  };
+
+  // Login settings: storage change
+  document.getElementById('login-settings-attachments-change').onclick = async () => {
+    const newRoot = await open({ directory: true, multiple: false, title: '选择新的附件保存位置' });
+    if (!newRoot) return;
+    try {
+      const confirmed = await showConfirm(`确定要将附件保存位置更改为:\n${newRoot}\n\n已有附件将自动迁移到新位置。`);
+      if (!confirmed) return;
+      const btn = document.getElementById('login-settings-attachments-change');
+      btn.disabled = true;
+      btn.textContent = '迁移中...';
+      await invoke('set_attachments_root', { newRoot });
+      await showAlert('更改成功，附件已迁移到新位置');
+      await loadLoginStorageSettings();
+    } catch (e) {
+      await showAlert('更改失败: ' + e);
+    } finally {
+      const btn = document.getElementById('login-settings-attachments-change');
+      btn.disabled = false;
+      btn.textContent = '更改';
+    }
+  };
+
+  async function loadLoginSettings() {
+    const mode = await invoke('get_app_mode');
+    loginCloudToggle.checked = mode.cloud_enabled;
+    loginCloudSection.classList.toggle('hidden', !mode.cloud_enabled);
+    const serverUrl = await invoke('get_server_url');
+    document.getElementById('login-settings-server-url').value = serverUrl;
+    loadLoginStorageSettings();
+  }
+
+  async function loadLoginStorageSettings() {
+    const root = await invoke('get_attachments_root');
+    document.getElementById('login-settings-attachments-root').value = root;
+    try {
+      const info = await invoke('get_attachments_storage_info', { root });
+      const sizeMB = (info.total_size / (1024 * 1024)).toFixed(1);
+      document.getElementById('login-settings-storage-info').textContent =
+        `共 ${info.file_count} 个文件，占用 ${sizeMB} MB`;
+    } catch (e) {
+      document.getElementById('login-settings-storage-info').textContent = '加载失败';
+    }
+  }
 
   await checkAuth();
   } catch (e) {

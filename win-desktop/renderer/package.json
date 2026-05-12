@@ -13,7 +13,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/api": "2.10.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "easymde": "^2.18.0",
     "marked": "^15.0.0",

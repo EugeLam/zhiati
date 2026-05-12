@@ -731,6 +731,17 @@ pub async fn setup_local_account(
 }
 
 #[tauri::command]
+pub async fn verify_local_password(password: String) -> Result<(), String> {
+    let cfg = crate::config::load_config();
+    let encrypted = cfg.local_password_encrypted.ok_or("未设置本地账户".to_string())?;
+    let decrypted = crate::crypto::decrypt_password(&encrypted)?;
+    if decrypted != password {
+        return Err("密码错误".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn toggle_cloud(state: tauri::State<'_, AppState>, enabled: bool) -> Result<(), String> {
     {
         let mut cloud = state.cloud_enabled.lock().map_err(|e| e.to_string())?;

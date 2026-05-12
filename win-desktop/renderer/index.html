@@ -384,6 +384,9 @@
 
   <!-- Login Overlay -->
   <div id="login-overlay">
+    <button id="login-settings-btn" class="login-settings-btn" title="设置">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H1a2 2 0 0 1 0-4h2a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V1a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-2a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
     <div class="login-card">
       <img src="/icon.png" class="login-icon" alt="">
       <h2>纸条</h2>
@@ -394,6 +397,75 @@
       </form>
       <p class="login-switch">还没有账号？<a href="#" id="switch-to-register">立即注册</a><span id="login-hint-text" class="login-hint" style="display:none">账号信息仅保存在本地，安全加密存储</span></p>
       <p id="login-error" class="login-error"></p>
+    </div>
+    <!-- Login Settings Overlay -->
+    <div id="login-settings-overlay" class="login-settings-overlay hidden">
+      <div class="login-settings-panel">
+        <div class="login-settings-header">
+          <h2>设置</h2>
+          <button id="login-settings-close-btn" class="login-settings-close-btn">&times;</button>
+        </div>
+        <nav class="login-settings-nav">
+          <button class="login-settings-nav-item active" data-login-settings="network">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            <span>网络</span>
+          </button>
+          <button class="login-settings-nav-item" data-login-settings="storage">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+            <span>存储</span>
+          </button>
+          <button class="login-settings-nav-item" data-login-settings="about">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span>关于</span>
+          </button>
+        </nav>
+        <div class="login-settings-content">
+          <div id="login-settings-network" class="login-settings-page active">
+            <div class="settings-form-group">
+              <div class="toggle-row">
+                <span class="toggle-row-label">云端模式</span>
+                <label class="switch-wrapper" for="login-local-mode-toggle">
+                  <input type="checkbox" id="login-local-mode-toggle">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <p class="settings-hint">开启后连接云端同步数据；关闭后仅使用本地存储</p>
+            </div>
+            <div id="login-cloud-settings-section">
+              <div class="settings-form-group">
+                <label for="login-settings-server-url">后端地址</label>
+                <div class="settings-input-row">
+                  <input type="text" id="login-settings-server-url" placeholder="http://localhost:8080">
+                  <button id="login-settings-server-save" class="btn-primary">保存</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="login-settings-storage" class="login-settings-page">
+            <div class="settings-form-group">
+              <label>附件保存位置</label>
+              <div class="settings-input-row">
+                <input type="text" id="login-settings-attachments-root" placeholder="默认位置" readonly>
+                <button id="login-settings-attachments-change" class="btn-primary">更改</button>
+              </div>
+              <p class="settings-hint">更改位置后，已有附件会自动迁移到新目录</p>
+            </div>
+            <div class="settings-form-group">
+              <label>存储统计</label>
+              <p id="login-settings-storage-info" class="settings-hint">加载中...</p>
+            </div>
+          </div>
+          <div id="login-settings-about" class="login-settings-page">
+            <div class="about-card">
+              <img src="/icon.png" class="about-icon" alt="">
+              <div class="about-info">
+                <h3>纸条</h3>
+                <p class="about-version">版本 0.1.0</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

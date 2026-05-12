@@ -202,6 +202,7 @@ fn main() {
             commands::get_attachments_storage_info,
             commands::get_app_mode,
             commands::setup_local_account,
+            commands::verify_local_password,
             commands::toggle_cloud,
             auth::login,
             auth::register,
