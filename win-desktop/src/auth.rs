@@ -8,6 +8,7 @@ fn build_client() -> reqwest::Client {
     reqwest::Client::builder()
         .proxy(reqwest::Proxy::custom(|_| None::<String>))
         .no_proxy()
+        .timeout(std::time::Duration::from_secs(5))
         .build()
         .expect("Failed to build reqwest client")
 }

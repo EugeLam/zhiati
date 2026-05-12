@@ -48,24 +48,37 @@ function isAttachmentPath(src) {
 }
 
 async function fixPreviewImages() {
+  const t0 = performance.now();
   const images = notePreview.querySelectorAll('img');
   for (const img of images) {
     const src = img.getAttribute('src');
     if (src && isAttachmentPath(src)) {
+      // Check cache first — avoid re-reading files on every render
+      const cached = imageDataUrlCache.get(src);
+      if (cached) {
+        img.src = cached;
+        continue;
+      }
+      const t1 = performance.now();
       try {
         const dataUrl = await invoke('read_attachment_as_data_url', { path: src });
+        console.log(`[JS] read_attachment_as_data_url for ${src}: ${Math.round(performance.now() - t1)}ms`);
+        imageDataUrlCache.set(src, dataUrl);
         img.src = dataUrl;
       } catch (e) {
         // Not found — handleImageError will attempt cloud download
       }
     }
   }
+  console.log(`[JS] fixPreviewImages total (${images.length} images): ${Math.round(performance.now() - t0)}ms`);
 }
 
 /** Render markdown into notePreview, then resolve image paths */
 async function renderPreview(markdown) {
+  const t0 = performance.now();
   notePreview.innerHTML = marked.parse(markdown) || '<p class="preview-empty">暂无内容</p>';
   await fixPreviewImages();
+  console.log(`[JS] renderPreview total: ${Math.round(performance.now() - t0)}ms`);
 }
 
 let notes = [];
@@ -119,6 +132,9 @@ let isRegisterMode = false;
 let loginMode = 'local_setup'; // 'local_setup' | 'cloud_bind' | 'cloud_register'
 
 // --- Image Cache & Fallback ---
+
+// Cache resolved data URLs to avoid re-reading files on every render
+const imageDataUrlCache = new Map();
 
 // Track images already processed to avoid redundant downloads
 const imageCache = new Set();
@@ -309,8 +325,8 @@ async function handleLoginSubmit(e) {
       updateSyncButtonText();
       await syncNotes();
       await emit('auth-changed', true);
-      // Sync local mode toggle to reflect cloud enabled
-      if (localModeToggle) localModeToggle.checked = false;
+      // Sync toggle to reflect cloud enabled
+      if (localModeToggle) localModeToggle.checked = true;
       if (cloudSettingsSection) cloudSettingsSection.classList.toggle('hidden', false);
       return;
     }
@@ -329,8 +345,8 @@ async function handleLoginSubmit(e) {
       updateSyncButtonText();
       await syncNotes();
       await emit('auth-changed', true);
-      // Sync local mode toggle to reflect cloud enabled
-      if (localModeToggle) localModeToggle.checked = false;
+      // Sync toggle to reflect cloud enabled
+      if (localModeToggle) localModeToggle.checked = true;
       if (cloudSettingsSection) cloudSettingsSection.classList.toggle('hidden', false);
       return;
     }
@@ -530,6 +546,7 @@ function initEasyMDE() {
       '|', 'guide'],
     status: false,
   });
+  let previewDebounceTimer = null;
   easyMDE.codemirror.on('change', () => {
     const currentContent = easyMDE.value();
     if (currentContent !== savedContent) {
@@ -539,8 +556,11 @@ function initEasyMDE() {
       isContentDirty = false;
       updateSaveBtn();
     }
-    // Live update custom preview (fire-and-forget for image resolution)
-    renderPreview(currentContent);
+    // Debounced live preview update — avoid re-resolving images on every keystroke
+    clearTimeout(previewDebounceTimer);
+    previewDebounceTimer = setTimeout(() => {
+      renderPreview(currentContent);
+    }, 300);
   });
   fitEditorHeight();
 }
@@ -578,18 +598,33 @@ async function handleImageUpload(editor) {
 
   if (!filePath) return;
 
+  // Insert loading placeholder at cursor
+  const placeholder = '![⏳ 上传中...]()';
+  let placeholderCursor = null;
+  if (easyMDE) {
+    placeholderCursor = easyMDE.codemirror.getCursor();
+    easyMDE.codemirror.replaceSelection(placeholder);
+  }
+
   try {
+    const t0 = performance.now();
     const result = await invoke('upload_image', { filePath, noteId: currentNote.id });
-    // Always use local relative path in markdown — renderPreview resolves to data URL
+    console.log(`[JS] upload_image total: ${Math.round(performance.now() - t0)}ms`);
     const mdPath = result.local_path || result.url;
     const markdown = `![${result.filename}](${mdPath})`;
-    if (easyMDE) {
-      easyMDE.codemirror.replaceSelection(markdown + '\n');
+    if (easyMDE && placeholderCursor) {
+      // Replace the placeholder with actual image
+      const endCursor = easyMDE.codemirror.getCursor();
+      easyMDE.codemirror.replaceRange(markdown + '\n', placeholderCursor, endCursor);
     }
-    // Re-render preview to resolve the new image
-    await renderPreview(easyMDE.value());
+    // Don't re-render preview here — it's hidden in edit mode anyway.
+    // Preview will update on save/exit-edit via setPreviewMode.
   } catch (err) {
     console.error('[Main] Image upload failed:', err);
+    if (easyMDE && placeholderCursor) {
+      const endCursor = easyMDE.codemirror.getCursor();
+      easyMDE.codemirror.replaceRange('', placeholderCursor, endCursor);
+    }
     await showAlert('图片上传失败: ' + (typeof err === 'string' ? err : '未知错误'));
   }
 }
@@ -1092,19 +1127,18 @@ async function init() {
 
   async function loadLocalModeState() {
     const mode = await invoke('get_app_mode');
-    // local_mode is the inverse of cloud_enabled
-    localModeToggle.checked = !mode.cloud_enabled;
+    localModeToggle.checked = mode.cloud_enabled;
     cloudSettingsSection.classList.toggle('hidden', !mode.cloud_enabled);
   }
 
   localModeToggle.onchange = async () => {
     try {
-      if (!localModeToggle.checked) {
+      if (localModeToggle.checked) {
         // Enabling cloud mode - check if cloud account is bound
         const currentMode = await invoke('get_app_mode');
         if (!currentMode.cloud_account_bound) {
           // Not bound, show bind dialog and revert toggle
-          localModeToggle.checked = true;
+          localModeToggle.checked = false;
           showBindDialog();
           return;
         }
@@ -1114,7 +1148,7 @@ async function init() {
         updateSyncButtonText();
         await syncNotes();
       } else {
-        // Disabling cloud mode (enabling local mode)
+        // Disabling cloud mode (switching to local mode)
         await invoke('toggle_cloud', { enabled: false });
         cloudSettingsSection.classList.toggle('hidden', true);
         updateSyncButtonText();

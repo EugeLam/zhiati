@@ -35,6 +35,7 @@ fn build_client() -> reqwest::Client {
     reqwest::Client::builder()
         .proxy(reqwest::Proxy::custom(|_| None::<String>))
         .no_proxy()
+        .timeout(std::time::Duration::from_secs(5))
         .build()
         .expect("Failed to build reqwest client")
 }
@@ -438,12 +439,13 @@ pub async fn upload_image(
     file_path: String,
     note_id: String,
 ) -> Result<ImageUploadResult, String> {
+    let total_start = std::time::Instant::now();
     tracing::info!("[Rust] upload_image called: {}", file_path);
 
     let file_bytes = tokio::fs::read(&file_path)
         .await
         .map_err(|e| format!("读取文件失败: {}", e))?;
-    tracing::info!("[Rust] File size: {} bytes", file_bytes.len());
+    tracing::info!("[Rust] File read: {}ms, size: {} bytes", total_start.elapsed().as_millis(), file_bytes.len());
 
     let ext = std::path::Path::new(&file_path)
         .extension()
@@ -465,6 +467,7 @@ pub async fn upload_image(
     };
 
     // 1. Save local copy to attachments/{note_id}/
+    let save_start = std::time::Instant::now();
     let root = crate::config::ensure_attachments_root();
     let note_dir = root.join("attachments").join(&note_id);
     tokio::fs::create_dir_all(&note_dir)
@@ -478,54 +481,64 @@ pub async fn upload_image(
 
     // Store relative path from attachments_root: attachments/{note_id}/{uuid}.ext
     let relative_path = format!("attachments/{}/{}", note_id, local_file_name);
-    tracing::info!("[Rust] Saved local copy: {}", relative_path);
+    tracing::info!("[Rust] Local save: {}ms, path: {}", save_start.elapsed().as_millis(), relative_path);
 
-    // 2. Try upload to S3 (non-fatal if unavailable)
+    // 2. Try upload to S3 (non-fatal if unavailable, skip in local mode)
+    let cloud_on = *state.cloud_enabled.lock().map_err(|e| e.to_string())?;
+    tracing::info!("[Rust] cloud_enabled={}, checking S3 upload", cloud_on);
     let server_url = get_server_url(&state).ok();
     let token = get_token(&state).ok();
     let mut s3_url: Option<String> = None;
 
-    if let (Some(srv), Some(tok)) = (&server_url, &token) {
-        let part = reqwest::multipart::Part::bytes(file_bytes.clone())
-            .file_name(file_name.clone())
-            .mime_str(mime_type)
-            .map_err(|e| format!("设置文件类型失败: {}", e))?;
-        let form = reqwest::multipart::Form::new()
-            .part("file", part)
-            .text("note_id", note_id.clone());
-        let upload_url = format!("{}/api/attachments/upload", srv);
-        let client = build_client();
+    if cloud_on {
+        if let (Some(srv), Some(tok)) = (&server_url, &token) {
+            let s3_start = std::time::Instant::now();
+            let part = reqwest::multipart::Part::bytes(file_bytes.clone())
+                .file_name(file_name.clone())
+                .mime_str(mime_type)
+                .map_err(|e| format!("设置文件类型失败: {}", e))?;
+            let form = reqwest::multipart::Form::new()
+                .part("file", part)
+                .text("note_id", note_id.clone());
+            let upload_url = format!("{}/api/attachments/upload", srv);
+            let client = build_client();
 
-        match client
-            .post(&upload_url)
-            .header("Authorization", auth_header(tok))
-            .multipart(form)
-            .send()
-            .await
-        {
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(body) = resp
-                    .json::<shared::ApiResponse<shared::AttachmentUploadResponse>>()
-                    .await
-                {
-                    if let Some(data) = body.data {
-                        s3_url = Some(data.url.clone());
-                        tracing::info!("[Rust] Uploaded to S3: {}", data.url);
+            match client
+                .post(&upload_url)
+                .header("Authorization", auth_header(tok))
+                .multipart(form)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(body) = resp
+                        .json::<shared::ApiResponse<shared::AttachmentUploadResponse>>()
+                        .await
+                    {
+                        if let Some(data) = body.data {
+                            s3_url = Some(data.url.clone());
+                            tracing::info!("[Rust] S3 upload: {}ms, url: {}", s3_start.elapsed().as_millis(), data.url);
+                        }
                     }
                 }
+                Ok(resp) => {
+                    let err = resp.text().await.unwrap_or_default();
+                    tracing::warn!("[Rust] S3 upload failed after {}ms: {}", s3_start.elapsed().as_millis(), err);
+                }
+                Err(e) => {
+                    tracing::warn!("[Rust] S3 upload error after {}ms: {:?}", s3_start.elapsed().as_millis(), e);
+                }
             }
-            Ok(resp) => {
-                let err = resp.text().await.unwrap_or_default();
-                tracing::warn!("[Rust] S3 upload failed: {}", err);
-            }
-            Err(e) => {
-                tracing::warn!("[Rust] S3 upload error: {:?}", e);
-            }
+        } else {
+            tracing::info!("[Rust] S3 skipped: no server_url or token");
         }
+    } else {
+        tracing::info!("[Rust] S3 skipped: local mode");
     }
 
     // Return S3 URL if available, otherwise relative path (frontend resolves to actual location)
     let final_url = s3_url.unwrap_or_else(|| relative_path.clone());
+    tracing::info!("[Rust] upload_image total: {}ms", total_start.elapsed().as_millis());
 
     Ok(ImageUploadResult {
         filename: file_name,
@@ -601,6 +614,7 @@ pub async fn resolve_attachment_path(path: String) -> Result<String, String> {
 /// This is a fallback for when the asset protocol is blocked by scope restrictions.
 #[tauri::command]
 pub async fn read_attachment_as_data_url(path: String) -> Result<String, String> {
+    let start = std::time::Instant::now();
     let root = crate::config::attachments_root();
     let full_path = root.join(&path);
     if !full_path.exists() {
@@ -609,6 +623,7 @@ pub async fn read_attachment_as_data_url(path: String) -> Result<String, String>
     let bytes = tokio::fs::read(&full_path)
         .await
         .map_err(|e| format!("读取文件失败: {}", e))?;
+    tracing::info!("[Rust] read_attachment read {} bytes in {}ms", bytes.len(), start.elapsed().as_millis());
     let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("png");
     let mime = match ext {
         "png" => "image/png",
@@ -620,6 +635,7 @@ pub async fn read_attachment_as_data_url(path: String) -> Result<String, String>
     };
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    tracing::info!("[Rust] read_attachment base64 encode {} bytes in {}ms", bytes.len(), start.elapsed().as_millis());
     Ok(format!("data:{};base64,{}", mime, encoded))
 }
 

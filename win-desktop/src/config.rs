@@ -15,7 +15,7 @@ pub struct Config {
     pub local_password_encrypted: Option<String>,
     #[serde(default)]
     pub bound_cloud_email: Option<String>,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub cloud_enabled: bool,
     /// Root directory for local attachment storage. Markdown stores relative paths from here.
     #[serde(default)]
@@ -24,10 +24,6 @@ pub struct Config {
 
 fn default_server_url() -> String {
     "http://localhost:8080".to_string()
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Default for Config {
@@ -40,7 +36,7 @@ impl Default for Config {
             local_email: None,
             local_password_encrypted: None,
             bound_cloud_email: None,
-            cloud_enabled: true,
+            cloud_enabled: false,
             attachments_root: None, // None means use default
         }
     }

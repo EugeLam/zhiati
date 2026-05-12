@@ -97,6 +97,25 @@ pub async fn init_db(db_path: &Path) -> Result<SqlitePool, String> {
         .await
         .map_err(|e| format!("Failed to set WAL mode: {}", e))?;
 
+    // NORMAL synchronous mode: fsync only at critical points, much faster writes
+    // with WAL this is safe against corruption
+    sqlx::query("PRAGMA synchronous=NORMAL")
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to set synchronous mode: {}", e))?;
+
+    // Larger cache: 16MB (default is ~2MB)
+    sqlx::query("PRAGMA cache_size=-16384")
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to set cache size: {}", e))?;
+
+    // Wait up to 5s for locked database instead of failing immediately
+    sqlx::query("PRAGMA busy_timeout=5000")
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Failed to set busy timeout: {}", e))?;
+
     Ok(pool)
 }
 
